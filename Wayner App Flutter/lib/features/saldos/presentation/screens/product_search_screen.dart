@@ -16,6 +16,8 @@ import '../../../usuarios/screens/usuarios_admin_screen.dart';
 import '../../../pedidos/screens/unidades_medida_admin_screen.dart';
 import '../../../logs/screens/audit_logs_screen.dart';
 import '../../../promociones/screens/promociones_screen.dart';
+// --- NUEVO IMPORT DE MERMA ---
+import '../../../mermas/presentation/screens/merma_screen.dart';
 
 class ProductSearchScreen extends StatefulWidget {
   const ProductSearchScreen({super.key});
@@ -150,9 +152,7 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
 
     final code = await Navigator.push<String>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const BarcodeScannerScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
     );
 
     if (code != null && code.isNotEmpty && mounted) {
@@ -174,13 +174,8 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
   }
 
   void abrirPantalla(Widget pantalla) {
-    Navigator.pop(context);
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => pantalla,
-      ),
-    );
+    Navigator.pop(context); // Cierra el drawer primero
+    Navigator.push(context, MaterialPageRoute(builder: (_) => pantalla));
   }
 
   Widget buildMenuItem({
@@ -214,35 +209,25 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                     width: 58,
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) {
-                      return const Icon(
-                        Icons.store,
-                        size: 42,
-                      );
+                      return const Icon(Icons.store, size: 42);
                     },
                   ),
                   const SizedBox(height: 10),
                   const Text(
                     "WyNer",
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                   if (nombreUsuario.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Text(
                       nombreUsuario,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ],
                   if (rolUsuario.isNotEmpty)
                     Text(
                       "Rol: $rolUsuario",
-                      style: const TextStyle(
-                        fontSize: 13,
-                      ),
+                      style: const TextStyle(fontSize: 13),
                     ),
                 ],
               ),
@@ -274,8 +259,37 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                       },
                     ),
                   ],
+                  // ... código anterior ...
+                  buildMenuItem(
+                    icon: Icons.report_problem_outlined,
+                    title: "Ingresar Merma",
+                    onTap: () {
+                      abrirPantalla(
+                        MermaScreen(
+                          usuarioActual: nombreUsuario,
+                          rolUsuario: rolUsuario,
+                          esModoReporte: false, // <-- Explicito: Modo Ingreso
+                        ),
+                      );
+                    },
+                  ),
                   if (esAdmin) ...[
                     const Divider(),
+                    buildMenuItem(
+                      icon: Icons.assignment_turned_in_outlined,
+                      title: "Reporte de mermas",
+                      onTap: () {
+                        abrirPantalla(
+                          MermaScreen(
+                            usuarioActual: nombreUsuario,
+                            rolUsuario: rolUsuario,
+                            esModoReporte:
+                                true, // <-- Explicito: Modo Reporte oculta el "+"
+                          ),
+                        );
+                      },
+                    ),
+                    // ... resto del código ...
                     buildMenuItem(
                       icon: Icons.admin_panel_settings,
                       title: "Administrar pedidos",
@@ -359,10 +373,7 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
         ...controller.classes.map(
           (clase) => DropdownMenuItem<String>(
             value: clase,
-            child: Text(
-              clase,
-              overflow: TextOverflow.ellipsis,
-            ),
+            child: Text(clase, overflow: TextOverflow.ellipsis),
           ),
         ),
       ],
@@ -387,64 +398,57 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
       onSelected: (String proveedor) {
         controller.filterByProvider(proveedor);
       },
-      fieldViewBuilder: (
-        context,
-        textEditingController,
-        focusNode,
-        onFieldSubmitted,
-      ) {
-        if (controller.selectedProvider != null &&
-            textEditingController.text != controller.selectedProvider) {
-          textEditingController.text = controller.selectedProvider!;
-        }
-
-        return TextField(
-          controller: textEditingController,
-          focusNode: focusNode,
-          decoration: InputDecoration(
-            labelText: 'Filtrar por proveedor',
-            hintText: 'Escriba el nombre del proveedor',
-            border: const OutlineInputBorder(),
-            prefixIcon: const Icon(Icons.local_shipping_outlined),
-            suffixIcon: controller.selectedProvider == null
-                ? null
-                : IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      textEditingController.clear();
-                      controller.filterByProvider(null);
-                    },
-                  ),
-          ),
-          onSubmitted: (value) {
-            final cleanValue = value.trim();
-
-            if (cleanValue.isEmpty) {
-              controller.filterByProvider(null);
-              return;
+      fieldViewBuilder:
+          (context, textEditingController, focusNode, onFieldSubmitted) {
+            if (controller.selectedProvider != null &&
+                textEditingController.text != controller.selectedProvider) {
+              textEditingController.text = controller.selectedProvider!;
             }
 
-            final match = controller.providers.where(
-              (proveedor) =>
-                  proveedor.toLowerCase() == cleanValue.toLowerCase(),
+            return TextField(
+              controller: textEditingController,
+              focusNode: focusNode,
+              decoration: InputDecoration(
+                labelText: 'Filtrar por proveedor',
+                hintText: 'Escriba el nombre del proveedor',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.local_shipping_outlined),
+                suffixIcon: controller.selectedProvider == null
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          textEditingController.clear();
+                          controller.filterByProvider(null);
+                        },
+                      ),
+              ),
+              onSubmitted: (value) {
+                final cleanValue = value.trim();
+
+                if (cleanValue.isEmpty) {
+                  controller.filterByProvider(null);
+                  return;
+                }
+
+                final match = controller.providers.where(
+                  (proveedor) =>
+                      proveedor.toLowerCase() == cleanValue.toLowerCase(),
+                );
+
+                if (match.isNotEmpty) {
+                  controller.filterByProvider(match.first);
+                }
+              },
             );
-
-            if (match.isNotEmpty) {
-              controller.filterByProvider(match.first);
-            }
           },
-        );
-      },
       optionsViewBuilder: (context, onSelected, options) {
         return Align(
           alignment: Alignment.topLeft,
           child: Material(
             elevation: 4,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxHeight: 260,
-                maxWidth: 420,
-              ),
+              constraints: const BoxConstraints(maxHeight: 260, maxWidth: 420),
               child: ListView.builder(
                 padding: EdgeInsets.zero,
                 itemCount: options.length,
@@ -454,10 +458,7 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                   return ListTile(
                     dense: true,
                     leading: const Icon(Icons.local_shipping_outlined),
-                    title: Text(
-                      proveedor,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    title: Text(proveedor, overflow: TextOverflow.ellipsis),
                     onTap: () => onSelected(proveedor),
                   );
                 },
@@ -549,9 +550,9 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                             Text(
                               controller.errorMessage!,
                               style: TextStyle(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onErrorContainer,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onErrorContainer,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),

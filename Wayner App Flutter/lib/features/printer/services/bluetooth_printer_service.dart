@@ -1,6 +1,8 @@
 import 'dart:ui' as ui;
 
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+import 'package:flutter/foundation.dart'
+    show kIsWeb; // Importante para detectar la Web
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
@@ -20,6 +22,14 @@ class BluetoothPrinterService {
   final ApiClient _apiClient = ApiClient();
 
   Future<List<BluetoothInfo>> getPairedDevices() async {
+    // Protección Web: Retorna lista vacía en lugar de buscar Bluetooth nativo
+    if (kIsWeb) {
+      debugPrint(
+        "Web detectada: Retornando lista vacía de dispositivos Bluetooth.",
+      );
+      return [];
+    }
+
     final enabled = await PrintBluetoothThermal.bluetoothEnabled;
     if (!enabled) {
       await _registrarLogImpresion(
@@ -57,6 +67,14 @@ class BluetoothPrinterService {
   }
 
   Future<bool> connect(String macAddress) async {
+    // Protección Web: Simulamos conexión exitosa
+    if (kIsWeb) {
+      debugPrint(
+        "Web detectada: Simulando conexión a impresora Bluetooth ($macAddress).",
+      );
+      return true;
+    }
+
     final isConnected = await PrintBluetoothThermal.connectionStatus;
     if (isConnected) return true;
 
@@ -67,13 +85,22 @@ class BluetoothPrinterService {
   }
 
   Future<void> disconnect() async {
+    // Protección Web: Evita ejecutar código nativo
+    if (kIsWeb) return;
+
     await PrintBluetoothThermal.disconnect;
     await Future.delayed(const Duration(milliseconds: 500));
   }
 
-  Future<bool> printPriceLabel({
-    required ProductPrice productPrice,
-  }) async {
+  Future<bool> printPriceLabel({required ProductPrice productPrice}) async {
+    // Protección Web: Simulamos impresión exitosa para no bloquear la interfaz
+    if (kIsWeb) {
+      debugPrint(
+        "Web detectada: Simulando impresión exitosa de ${productPrice.nombreProducto}",
+      );
+      return true;
+    }
+
     final printerName = await getSavedPrinterName();
     final printerMac = await getSavedPrinterMac();
 
@@ -215,189 +242,210 @@ class BluetoothPrinterService {
     final vigencia =
         '${_formatDate(promocion.fechaInicio)} hasta ${_formatDate(promocion.fechaFin)}';
 
-    bytes.addAll(generator.text(
-      'PROMOCION',
-      styles: const PosStyles(
-        align: PosAlign.center,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size2,
+    bytes.addAll(
+      generator.text(
+        'PROMOCION',
+        styles: const PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          width: PosTextSize.size2,
+          height: PosTextSize.size2,
+        ),
       ),
-    ));
+    );
 
     bytes.addAll(generator.feed(1));
 
-    bytes.addAll(generator.text(
-      encabezado.toUpperCase(),
-      styles: const PosStyles(
-        align: PosAlign.center,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size2,
+    bytes.addAll(
+      generator.text(
+        encabezado.toUpperCase(),
+        styles: const PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          width: PosTextSize.size2,
+          height: PosTextSize.size2,
+        ),
       ),
-    ));
+    );
 
     bytes.addAll(generator.feed(1));
 
-    bytes.addAll(generator.text(
-      'NOMBRE:',
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size1,
-      ),
-    ));
-
-    bytes.addAll(generator.text(
-      nombre,
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-        width: PosTextSize.size1,
-        height: PosTextSize.size1,
-      ),
-    ));
-
-    bytes.addAll(generator.feed(1));
-
-    bytes.addAll(generator.text(
-      'ANTES:',
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size1,
-      ),
-    ));
-
-    final oldPriceImage = await _buildStrikethroughPriceImage('\$$antes');
-
-    bytes.addAll(generator.imageRaster(
-      oldPriceImage,
-      align: PosAlign.center,
-      highDensityHorizontal: true,
-      highDensityVertical: true,
-    ));
-
-    bytes.addAll(generator.feed(1));
-
-    bytes.addAll(generator.text(
-      'AHORA',
-      styles: const PosStyles(
-        align: PosAlign.center,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size1,
-      ),
-    ));
-
-    bytes.addAll(generator.text(
-      '\$$ahora',
-      styles: const PosStyles(
-        align: PosAlign.center,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size2,
-      ),
-    ));
-
-    bytes.addAll(generator.feed(1));
-
-    bytes.addAll(generator.text(
-      'AHORRO:',
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size1,
-      ),
-    ));
-
-    bytes.addAll(generator.text(
-      '\$$ahorro',
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-      ),
-    ));
-
-    bytes.addAll(generator.text(
-      'DESCUENTO:',
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size1,
-      ),
-    ));
-
-    bytes.addAll(generator.text(
-      descuento,
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-      ),
-    ));
-
-    bytes.addAll(generator.text(
-      'VIGENCIA:',
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-        width: PosTextSize.size2,
-        height: PosTextSize.size1,
-      ),
-    ));
-
-    bytes.addAll(generator.text(
-      vigencia,
-      styles: const PosStyles(
-        align: PosAlign.left,
-        bold: true,
-      ),
-    ));
-
-    if (promocion.mecanica?.isNotEmpty == true) {
-      bytes.addAll(generator.feed(1));
-
-      bytes.addAll(generator.text(
-        'MECANICA:',
+    bytes.addAll(
+      generator.text(
+        'NOMBRE:',
         styles: const PosStyles(
           align: PosAlign.left,
           bold: true,
           width: PosTextSize.size2,
           height: PosTextSize.size1,
         ),
-      ));
+      ),
+    );
 
-      bytes.addAll(generator.text(
-        _cleanText(promocion.mecanica!),
+    bytes.addAll(
+      generator.text(
+        nombre,
         styles: const PosStyles(
           align: PosAlign.left,
           bold: true,
+          width: PosTextSize.size1,
+          height: PosTextSize.size1,
         ),
-      ));
+      ),
+    );
+
+    bytes.addAll(generator.feed(1));
+
+    bytes.addAll(
+      generator.text(
+        'ANTES:',
+        styles: const PosStyles(
+          align: PosAlign.left,
+          bold: true,
+          width: PosTextSize.size2,
+          height: PosTextSize.size1,
+        ),
+      ),
+    );
+
+    final oldPriceImage = await _buildStrikethroughPriceImage('\$$antes');
+
+    bytes.addAll(
+      generator.imageRaster(
+        oldPriceImage,
+        align: PosAlign.center,
+        highDensityHorizontal: true,
+        highDensityVertical: true,
+      ),
+    );
+
+    bytes.addAll(generator.feed(1));
+
+    bytes.addAll(
+      generator.text(
+        'AHORA',
+        styles: const PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          width: PosTextSize.size2,
+          height: PosTextSize.size1,
+        ),
+      ),
+    );
+
+    bytes.addAll(
+      generator.text(
+        '\$$ahora',
+        styles: const PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          width: PosTextSize.size2,
+          height: PosTextSize.size2,
+        ),
+      ),
+    );
+
+    bytes.addAll(generator.feed(1));
+
+    bytes.addAll(
+      generator.text(
+        'AHORRO:',
+        styles: const PosStyles(
+          align: PosAlign.left,
+          bold: true,
+          width: PosTextSize.size2,
+          height: PosTextSize.size1,
+        ),
+      ),
+    );
+
+    bytes.addAll(
+      generator.text(
+        '\$$ahorro',
+        styles: const PosStyles(align: PosAlign.left, bold: true),
+      ),
+    );
+
+    bytes.addAll(
+      generator.text(
+        'DESCUENTO:',
+        styles: const PosStyles(
+          align: PosAlign.left,
+          bold: true,
+          width: PosTextSize.size2,
+          height: PosTextSize.size1,
+        ),
+      ),
+    );
+
+    bytes.addAll(
+      generator.text(
+        descuento,
+        styles: const PosStyles(align: PosAlign.left, bold: true),
+      ),
+    );
+
+    bytes.addAll(
+      generator.text(
+        'VIGENCIA:',
+        styles: const PosStyles(
+          align: PosAlign.left,
+          bold: true,
+          width: PosTextSize.size2,
+          height: PosTextSize.size1,
+        ),
+      ),
+    );
+
+    bytes.addAll(
+      generator.text(
+        vigencia,
+        styles: const PosStyles(align: PosAlign.left, bold: true),
+      ),
+    );
+
+    if (promocion.mecanica?.isNotEmpty == true) {
+      bytes.addAll(generator.feed(1));
+
+      bytes.addAll(
+        generator.text(
+          'MECANICA:',
+          styles: const PosStyles(
+            align: PosAlign.left,
+            bold: true,
+            width: PosTextSize.size2,
+            height: PosTextSize.size1,
+          ),
+        ),
+      );
+
+      bytes.addAll(
+        generator.text(
+          _cleanText(promocion.mecanica!),
+          styles: const PosStyles(align: PosAlign.left, bold: true),
+        ),
+      );
     }
 
     bytes.addAll(generator.feed(1));
 
     final smallQrImage = await _buildSmallQrImage(codigo);
 
-    bytes.addAll(generator.imageRaster(
-      smallQrImage,
-      align: PosAlign.center,
-      highDensityHorizontal: true,
-      highDensityVertical: true,
-    ));
-
-    bytes.addAll(generator.text(
-      codigo,
-      styles: const PosStyles(
+    bytes.addAll(
+      generator.imageRaster(
+        smallQrImage,
         align: PosAlign.center,
-        bold: true,
+        highDensityHorizontal: true,
+        highDensityVertical: true,
       ),
-    ));
+    );
+
+    bytes.addAll(
+      generator.text(
+        codigo,
+        styles: const PosStyles(align: PosAlign.center, bold: true),
+      ),
+    );
 
     return bytes;
   }
@@ -449,13 +497,7 @@ class BluetoothPrinterService {
       maxLines: 1,
     );
 
-    _drawQr(
-      canvas,
-      data: codigo,
-      x: 255,
-      y: 68,
-      size: 112,
-    );
+    _drawQr(canvas, data: codigo, x: 255, y: 68, size: 112);
 
     _drawText(
       canvas,
@@ -489,10 +531,7 @@ class BluetoothPrinterService {
       emptyColor: Colors.white,
     );
 
-    qrPainter.paint(
-      canvas,
-      const Size(112, 112),
-    );
+    qrPainter.paint(canvas, const Size(112, 112));
 
     return _canvasToImage(recorder, width, height);
   }
@@ -523,11 +562,7 @@ class BluetoothPrinterService {
       ..strokeWidth = 5
       ..style = PaintingStyle.stroke;
 
-    canvas.drawLine(
-      const Offset(5, 20),
-      const Offset(100, 20),
-      paint,
-    );
+    canvas.drawLine(const Offset(5, 20), const Offset(100, 20), paint);
 
     return _canvasToImage(recorder, width, height);
   }

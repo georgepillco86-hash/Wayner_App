@@ -26,13 +26,36 @@ class ProductCard extends StatelessWidget {
           ),
         ),
         trailing: Column(
+          mainAxisSize: MainAxisSize
+              .min, // Evita que la columna desborde los límites del ListTile
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            const Text('Stock', style: TextStyle(fontSize: 12)),
+            // --- SECCIÓN DEL PRECIO ---
+            Text(
+              '\$${product.precio.toStringAsFixed(2)}',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(
+                  context,
+                ).colorScheme.primary, // Usa el color principal del tema
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(height: 6), // Espaciador
+            // --- SECCIÓN DEL STOCK ---
+            const Text(
+              'Stock',
+              style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.0),
+            ),
             Text(
               formatter.format(product.stock),
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                height: 1.1,
+              ),
             ),
           ],
         ),

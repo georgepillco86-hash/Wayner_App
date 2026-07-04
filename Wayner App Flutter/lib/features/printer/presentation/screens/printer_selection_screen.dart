@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb; // <-- 1. Importado kIsWeb
 import 'package:flutter/material.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -30,6 +31,14 @@ class _PrinterSelectionScreenState extends State<PrinterSelectionScreen> {
     });
 
     try {
+      // <-- 2. Protección para Web: no pedir permisos ni escanear
+      if (kIsWeb) {
+        setState(() {
+          _devices = [];
+        });
+        return;
+      }
+
       final bluetoothConnect = await Permission.bluetoothConnect.request();
       final bluetoothScan = await Permission.bluetoothScan.request();
       final location = await Permission.location.request();
@@ -80,8 +89,7 @@ class _PrinterSelectionScreenState extends State<PrinterSelectionScreen> {
       if (!mounted) return;
 
       Navigator.pop(context, device);
-    }
-    else {
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No se pudo conectar la impresora')),
       );
@@ -94,10 +102,7 @@ class _PrinterSelectionScreenState extends State<PrinterSelectionScreen> {
       appBar: AppBar(
         title: const Text('Seleccionar impresora'),
         actions: [
-          IconButton(
-            onPressed: _loadDevices,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(onPressed: _loadDevices, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: Builder(

@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart'
+    show kIsWeb; // <-- 1. Importación para detectar Web
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -13,6 +15,9 @@ class BiometricAuthService {
   static const String _userDataKey = 'biometric_user_data';
 
   static Future<bool> isAvailable() async {
+    // <-- 2. Protección Web: Retorna falso inmediatamente si estamos en el navegador
+    if (kIsWeb) return false;
+
     try {
       final canCheckBiometrics = await _auth.canCheckBiometrics;
       final isDeviceSupported = await _auth.isDeviceSupported();
@@ -29,13 +34,17 @@ class BiometricAuthService {
   }
 
   static Future<bool> authenticate() async {
+    // <-- 3. Protección Web: Evita ejecutar la interfaz nativa de huella/rostro
+    if (kIsWeb) return false;
+
     try {
       final available = await isAvailable();
 
       if (!available) return false;
 
       return await _auth.authenticate(
-        localizedReason: 'Confirma tu identidad para activar el ingreso con huella',
+        localizedReason:
+            'Confirma tu identidad para activar el ingreso con huella',
       );
     } on PlatformException catch (e) {
       debugPrint('Error biométrico: ${e.code} - ${e.message}');
