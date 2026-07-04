@@ -7,6 +7,8 @@ from app.core.database import db
 
 class SaldoProductRepository:
     TABLE_NAME = "v_saldosproductos"
+    PRECIOS_TABLE = "v_kardexproductos"
+    COLUMNA_PRECIO = "Precio"
 
     def _safe_limit(self, limit: int | None = None) -> int:
         return int(limit or 100)
@@ -47,8 +49,21 @@ class SaldoProductRepository:
             s.Nombre,
             s.Stock,
             s.Marca,
-            s.Clase
+            s.Clase,
+            COALESCE(p.PrecioFinal, 0) AS Precio
         FROM {self.TABLE_NAME} s
+        LEFT JOIN (
+            SELECT 
+                TRIM(Codigo) AS CodigoClean, 
+                MAX(
+                    CASE 
+                        WHEN COALESCE(IVA, 0) > 0 THEN {self.COLUMNA_PRECIO} * 1.15 
+                        ELSE {self.COLUMNA_PRECIO} 
+                    END
+                ) AS PrecioFinal
+            FROM {self.PRECIOS_TABLE}
+            GROUP BY TRIM(Codigo)
+        ) p ON TRIM(s.Codigo) = p.CodigoClean
         """
 
         params: list[Any] = []
@@ -60,8 +75,21 @@ class SaldoProductRepository:
                 s.Nombre,
                 s.Stock,
                 s.Marca,
-                s.Clase
+                s.Clase,
+                COALESCE(p.PrecioFinal, 0) AS Precio
             FROM {self.TABLE_NAME} s
+            LEFT JOIN (
+                SELECT 
+                    TRIM(Codigo) AS CodigoClean, 
+                    MAX(
+                        CASE 
+                            WHEN COALESCE(IVA, 0) > 0 THEN {self.COLUMNA_PRECIO} * 1.15 
+                            ELSE {self.COLUMNA_PRECIO} 
+                        END
+                    ) AS PrecioFinal
+                FROM {self.PRECIOS_TABLE}
+                GROUP BY TRIM(Codigo)
+            ) p ON TRIM(s.Codigo) = p.CodigoClean
             WHERE (
                 s.Codigo LIKE %s
                 OR s.Nombre LIKE %s
@@ -92,24 +120,37 @@ class SaldoProductRepository:
 
         query = f"""
         SELECT 
-            Codigo,
-            Nombre,
-            Stock,
-            Marca,
-            Clase
-        FROM {self.TABLE_NAME}
+            s.Codigo,
+            s.Nombre,
+            s.Stock,
+            s.Marca,
+            s.Clase,
+            COALESCE(p.PrecioFinal, 0) AS Precio
+        FROM {self.TABLE_NAME} s
+        LEFT JOIN (
+            SELECT 
+                TRIM(Codigo) AS CodigoClean, 
+                MAX(
+                    CASE 
+                        WHEN COALESCE(IVA, 0) > 0 THEN {self.COLUMNA_PRECIO} * 1.15 
+                        ELSE {self.COLUMNA_PRECIO} 
+                    END
+                ) AS PrecioFinal
+            FROM {self.PRECIOS_TABLE}
+            GROUP BY TRIM(Codigo)
+        ) p ON TRIM(s.Codigo) = p.CodigoClean
         WHERE (
-            Codigo LIKE %s
-            OR Nombre LIKE %s
-            OR Marca LIKE %s
-            OR Clase LIKE %s
+            s.Codigo LIKE %s
+            OR s.Nombre LIKE %s
+            OR s.Marca LIKE %s
+            OR s.Clase LIKE %s
         )
         """
 
         params: list[Any] = [pattern, pattern, pattern, pattern]
 
         if clase:
-            query += " AND Clase = %s"
+            query += " AND s.Clase = %s"
             params.append(clase)
         
         if proveedor:
@@ -117,7 +158,7 @@ class SaldoProductRepository:
             AND EXISTS (
                 SELECT 1
                 FROM v_kardexproductos k
-                WHERE k.Codigo = v_saldosproductos.Codigo
+                WHERE k.Codigo = s.Codigo
                 AND k.NombreProveedor IS NOT NULL
                 AND TRIM(k.NombreProveedor) <> ''
                 AND UPPER(TRIM(k.NombreProveedor)) <> 'DUCHI SANCHEZ ROSA EMPERATRIZ'
@@ -126,11 +167,8 @@ class SaldoProductRepository:
             """
             params.append(proveedor)
 
-        # categoria se mantiene por compatibilidad con saldo_service.py,
-        # pero no se usa porque v_saldosproductos no tiene columna Categoria.
-
         query += """
-        ORDER BY Nombre
+        ORDER BY s.Nombre
         LIMIT %s
         """
         params.append(safe_limit)
@@ -172,8 +210,21 @@ class SaldoProductRepository:
             s.Nombre,
             s.Stock,
             s.Marca,
-            s.Clase
+            s.Clase,
+            COALESCE(p.PrecioFinal, 0) AS Precio
         FROM {self.TABLE_NAME} s
+        LEFT JOIN (
+            SELECT 
+                TRIM(Codigo) AS CodigoClean, 
+                MAX(
+                    CASE 
+                        WHEN COALESCE(IVA, 0) > 0 THEN {self.COLUMNA_PRECIO} * 1.15 
+                        ELSE {self.COLUMNA_PRECIO} 
+                    END
+                ) AS PrecioFinal
+            FROM {self.PRECIOS_TABLE}
+            GROUP BY TRIM(Codigo)
+        ) p ON TRIM(s.Codigo) = p.CodigoClean
         WHERE s.Clase = %s
         """
         params: list[Any] = [clase]
@@ -203,13 +254,26 @@ class SaldoProductRepository:
     def get_by_code(self, codigo: str) -> dict[str, Any] | None:
         query = f"""
         SELECT 
-            Codigo,
-            Nombre,
-            Stock,
-            Marca,
-            Clase
-        FROM {self.TABLE_NAME}
-        WHERE Codigo = %s
+            s.Codigo,
+            s.Nombre,
+            s.Stock,
+            s.Marca,
+            s.Clase,
+            COALESCE(p.PrecioFinal, 0) AS Precio
+        FROM {self.TABLE_NAME} s
+        LEFT JOIN (
+            SELECT 
+                TRIM(Codigo) AS CodigoClean, 
+                MAX(
+                    CASE 
+                        WHEN COALESCE(IVA, 0) > 0 THEN {self.COLUMNA_PRECIO} * 1.15 
+                        ELSE {self.COLUMNA_PRECIO} 
+                    END
+                ) AS PrecioFinal
+            FROM {self.PRECIOS_TABLE}
+            GROUP BY TRIM(Codigo)
+        ) p ON TRIM(s.Codigo) = p.CodigoClean
+        WHERE s.Codigo = %s
         LIMIT 1
         """
         return db.fetch_one(query, (codigo,))
