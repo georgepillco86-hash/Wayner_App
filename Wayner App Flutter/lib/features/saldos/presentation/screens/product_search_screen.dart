@@ -18,6 +18,9 @@ import '../../../logs/screens/audit_logs_screen.dart';
 import '../../../promociones/screens/promociones_screen.dart';
 // --- NUEVO IMPORT DE MERMA ---
 import '../../../mermas/presentation/screens/merma_screen.dart';
+////// CRONOGRAMA ////////////
+import '../../../cronograma/presentation/screens/calendario_screen.dart';
+import '../../../cronograma/presentation/screens/notificaciones_screen.dart';
 
 class ProductSearchScreen extends StatefulWidget {
   const ProductSearchScreen({super.key});
@@ -317,6 +320,13 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                       },
                     ),
                     buildMenuItem(
+                      icon: Icons.calendar_month,
+                      title: "Calendario de Pedidos",
+                      onTap: () {
+                        abrirPantalla(const CalendarioScreen());
+                      },
+                    ),
+                    buildMenuItem(
                       icon: Icons.straighten,
                       title: "Unidades de medida",
                       onTap: () {
@@ -480,12 +490,19 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
         title: const Text('Stock'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Actualizar',
-            onPressed: controller.refresh,
+            icon: const Icon(Icons.notifications_active),
+            tooltip:
+                'Notificaciones', // Cambié el tooltip para que tenga más sentido
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificacionesScreen()),
+              );
+            }, // <-- FALTABA ESTA LLAVE DE CIERRE '}'
           ),
         ],
       ),
+      // ... aquí continúa el body: de tu Scaffold
       body: Column(
         children: [
           Padding(
