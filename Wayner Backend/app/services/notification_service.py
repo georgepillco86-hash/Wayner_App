@@ -23,8 +23,13 @@ class NotificationService:
             
             for visita in visitas_manana:
                 proveedor = visita["proveedor"]
-                usuarios = json.loads(visita["usuarios_vinculados"])
-                hora_exacta = visita["fecha_programada"].strftime("%H:%M") # Extraemos la hora para el mensaje
+                
+                # --- SOLUCIÓN DEL ERROR ---
+                # Si la BD ya lo parseó a lista, lo usamos. Si viene como texto, lo decodificamos.
+                usuarios_raw = visita["usuarios_vinculados"]
+                usuarios = json.loads(usuarios_raw) if isinstance(usuarios_raw, str) else usuarios_raw
+                
+                hora_exacta = visita["fecha_programada"].strftime("%H:%M") 
                 
                 # Crear alerta para cada usuario
                 for usuario in usuarios:

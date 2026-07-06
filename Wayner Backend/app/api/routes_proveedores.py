@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.repositories.proveedor_repository import ProveedorRepository
 
+# Aquí es donde se define el "router" que estaba dando error
 router = APIRouter()
 proveedor_repo = ProveedorRepository()
 
@@ -12,4 +13,20 @@ async def listar_proveedores():
 @router.get("/{nombre_proveedor}/productos")
 async def listar_productos_proveedor(nombre_proveedor: str):
     productos = proveedor_repo.get_productos_por_proveedor(nombre_proveedor)
+    return productos
+
+# --- RUTAS NUEVAS PARA BÚSQUEDA HÍBRIDA ---
+
+@router.get("/producto/{codigo}/precio-vivo")
+async def obtener_precio_real(codigo: str):
+    """Devuelve los valores financieros actuales de un producto"""
+    valores = proveedor_repo.obtener_precio_en_vivo(codigo)
+    return valores
+
+@router.get("/busqueda-profunda")
+async def buscar_en_kardex(q: str):
+    """Busca directamente en la base de datos principal agrupando por código"""
+    if len(q) < 3:
+        return [] # Evitar búsquedas masivas con solo 1 o 2 letras
+    productos = proveedor_repo.busqueda_profunda_kardex(q)
     return productos
