@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from app.repositories.proveedor_repository import ProveedorRepository
+from typing import Optional
 
 # Aquí es donde se define el "router" que estaba dando error
 router = APIRouter()
@@ -30,3 +31,9 @@ async def buscar_en_kardex(q: str):
         return [] # Evitar búsquedas masivas con solo 1 o 2 letras
     productos = proveedor_repo.busqueda_profunda_kardex(q)
     return productos
+
+@router.get("/buscar-rapido")
+async def buscar_rapido(q: str, proveedor: Optional[str] = None):
+    """Busca instantáneamente en las tablas espejo de p_proveedores"""
+    if len(q) < 2: return []
+    return proveedor_repo.buscar_rapido_proveedores(q, proveedor)
