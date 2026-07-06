@@ -9,7 +9,7 @@ class SaldosApiService {
   final ApiClient _apiClient;
 
   SaldosApiService({ApiClient? apiClient})
-      : _apiClient = apiClient ?? ApiClient();
+    : _apiClient = apiClient ?? ApiClient();
 
   List<dynamic> _extractData(dynamic response) {
     if (response is Map && response['data'] is List) {
@@ -41,15 +41,15 @@ class SaldosApiService {
       },
     );
 
-    return _extractData(response)
-        .whereType<Map<String, dynamic>>()
-        .map(ProductBalance.fromJson)
-        .toList();
+    return _extractData(
+      response,
+    ).whereType<Map<String, dynamic>>().map(ProductBalance.fromJson).toList();
   }
 
   Future<ProductBalance?> getProductByCode(String code) async {
-    final response =
-        await _apiClient.get('${ApiConfig.saldosBasePath}/producto/$code');
+    final response = await _apiClient.get(
+      '${ApiConfig.saldosBasePath}/producto/$code',
+    );
     final data = _extractMap(response);
     if (data == null) return null;
     return ProductBalance.fromJson(data);
@@ -67,10 +67,9 @@ class SaldosApiService {
       },
     );
 
-    return _extractData(response)
-        .whereType<Map<String, dynamic>>()
-        .map(ProductBalance.fromJson)
-        .toList();
+    return _extractData(
+      response,
+    ).whereType<Map<String, dynamic>>().map(ProductBalance.fromJson).toList();
   }
 
   Future<List<String>> getClasses() async {
@@ -83,8 +82,9 @@ class SaldosApiService {
   }
 
   Future<List<String>> getProviders() async {
-    final response =
-        await _apiClient.get('${ApiConfig.saldosBasePath}/proveedores');
+    final response = await _apiClient.get(
+      '${ApiConfig.saldosBasePath}/proveedores',
+    );
 
     return _extractData(response)
         .whereType<Map<String, dynamic>>()
@@ -106,10 +106,9 @@ class SaldosApiService {
       },
     );
 
-    return _extractData(response)
-        .whereType<Map<String, dynamic>>()
-        .map(ProductBalance.fromJson)
-        .toList();
+    return _extractData(
+      response,
+    ).whereType<Map<String, dynamic>>().map(ProductBalance.fromJson).toList();
   }
 
   Future<List<SalesSummary>> getSalesSummary(
@@ -119,16 +118,12 @@ class SaldosApiService {
   ) async {
     final response = await _apiClient.get(
       '/api/productos/$codigoBarra/ventas-resumen',
-      queryParameters: {
-        'desde': desde,
-        'hasta': hasta,
-      },
+      queryParameters: {'desde': desde, 'hasta': hasta},
     );
 
-    return _extractData(response)
-        .whereType<Map<String, dynamic>>()
-        .map(SalesSummary.fromJson)
-        .toList();
+    return _extractData(
+      response,
+    ).whereType<Map<String, dynamic>>().map(SalesSummary.fromJson).toList();
   }
 
   Future<ProductPrice> getProductPrice(String codigoBarra) async {
@@ -154,12 +149,43 @@ class SaldosApiService {
   ) async {
     final response = await _apiClient.get(
       '/api/productos/$codigoBarra/kardex-tabla',
-      queryParameters: {
-        'desde': desde,
-        'hasta': hasta,
-      },
+      queryParameters: {'desde': desde, 'hasta': hasta},
     );
 
     return _extractData(response).whereType<Map<String, dynamic>>().toList();
+  }
+
+  // 1. Búsqueda profunda de emergencia en Kardex
+  Future<List<dynamic>> busquedaProfundaKardex(String termino) async {
+    try {
+      final response = await _apiClient.get(
+        '/api/proveedores/busqueda-profunda',
+        queryParameters: {'q': termino},
+      );
+
+      // Maneja si la respuesta viene directa o dentro de un "data"
+      if (response is List) return response;
+      if (response is Map && response['data'] is List) return response['data'];
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // 2. Consulta ultrarrápida del precio en vivo
+  Future<Map<String, dynamic>> obtenerPrecioVivo(String codigo) async {
+    try {
+      final response = await _apiClient.get(
+        '/api/proveedores/producto/$codigo/precio-vivo',
+      );
+
+      if (response is Map<String, dynamic>) {
+        if (response.containsKey('data')) return response['data'];
+        return response;
+      }
+      return {"precio_vivo": 0.0, "iva_vivo": 0.0, "costo_vivo": 0.0};
+    } catch (e) {
+      return {"precio_vivo": 0.0, "iva_vivo": 0.0, "costo_vivo": 0.0};
+    }
   }
 }

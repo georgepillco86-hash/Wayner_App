@@ -21,6 +21,7 @@ import '../../../mermas/presentation/screens/merma_screen.dart';
 ////// CRONOGRAMA ////////////
 import '../../../cronograma/presentation/screens/calendario_screen.dart';
 import '../../../cronograma/presentation/screens/notificaciones_screen.dart';
+import '../../data/services/saldos_api_service.dart';
 
 class ProductSearchScreen extends StatefulWidget {
   const ProductSearchScreen({super.key});
@@ -32,6 +33,7 @@ class ProductSearchScreen extends StatefulWidget {
 class _ProductSearchScreenState extends State<ProductSearchScreen> {
   final TextEditingController _searchController = TextEditingController();
 
+  bool _busquedaProfunda = false;
   bool esAdmin = false;
   bool esBodeguero = false;
 
@@ -534,6 +536,24 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
               ],
             ),
           ),
+          SwitchListTile(
+            activeColor: Colors.blue,
+            title: const Text(
+              'Búsqueda Profunda (Kardex General)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            subtitle: const Text(
+              'Útil si el producto es nuevo y no aparece en la lista.',
+            ),
+            value: _busquedaProfunda,
+            onChanged: (bool value) {
+              setState(() {
+                _busquedaProfunda = value;
+                // Si quieres que busque automáticamente al encender el switch, descomenta la siguiente línea:
+                // if (_searchController.text.isNotEmpty) controller.search(_searchController.text);
+              });
+            },
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: _buildClassFilter(controller),
@@ -599,8 +619,23 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                     itemBuilder: (context, index) {
                       final product = controller.products[index];
 
+                      // ---> ESTE ES TU CÓDIGO ACTUALIZADO <---
                       return InkWell(
-                        onTap: () {
+                        onTap: () async {
+                          // 1. Instancias el servicio que acabas de importar
+                          final apiService = SaldosApiService();
+
+                          // 2. Traes los datos vivos del backend usando el código del producto
+                          final datosVivos = await apiService.obtenerPrecioVivo(
+                            product.codigo,
+                          );
+
+                          // 3. Actualizas el producto localmente
+                          product.precio = datosVivos['precio_vivo'];
+                          product.iva = datosVivos['iva_vivo'];
+                          product.costo = datosVivos['costo_vivo'];
+
+                          // 4. Abres la pantalla de detalle
                           Navigator.push(
                             context,
                             MaterialPageRoute(

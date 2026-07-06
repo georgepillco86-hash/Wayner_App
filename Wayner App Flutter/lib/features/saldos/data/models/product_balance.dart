@@ -4,7 +4,11 @@ class ProductBalance {
   final double stock;
   final String? marca;
   final String? clase;
-  final double precio; // <-- Se añade la variable precio
+
+  // Quitamos la palabra "final" para poder actualizar los precios en vivo
+  double precio;
+  double iva;
+  double costo;
 
   ProductBalance({
     required this.codigo,
@@ -12,7 +16,9 @@ class ProductBalance {
     required this.stock,
     this.marca,
     this.clase,
-    this.precio = 0.0, // <-- Valor por defecto a 0.0 por seguridad
+    this.precio = 0.0,
+    this.iva = 0.0,
+    this.costo = 0.0,
   });
 
   factory ProductBalance.fromJson(Map<String, dynamic> json) {
@@ -22,8 +28,9 @@ class ProductBalance {
       stock: double.tryParse(json['Stock']?.toString() ?? '0') ?? 0.0,
       marca: json['Marca']?.toString(),
       clase: json['Clase']?.toString(),
-      // <-- Se extrae el precio desde el campo "Precio" del JSON
       precio: double.tryParse(json['Precio']?.toString() ?? '0') ?? 0.0,
+      iva: double.tryParse(json['IVA']?.toString() ?? '0') ?? 0.0,
+      costo: double.tryParse(json['Costo']?.toString() ?? '0') ?? 0.0,
     );
   }
 
@@ -34,7 +41,9 @@ class ProductBalance {
       'Stock': stock,
       'Marca': marca,
       'Clase': clase,
-      'Precio': precio, // <-- Se incluye al convertir a JSON
+      'Precio': precio,
+      'IVA': iva,
+      'Costo': costo,
     };
   }
 }
