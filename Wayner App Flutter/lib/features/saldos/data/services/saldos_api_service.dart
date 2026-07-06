@@ -188,4 +188,36 @@ class SaldosApiService {
       return {"precio_vivo": 0.0, "iva_vivo": 0.0, "costo_vivo": 0.0};
     }
   }
+
+  // Obtener la lista de proveedores para el menú desplegable
+  Future<List<String>> obtenerProveedores() async {
+    try {
+      final response = await _apiClient.get('/api/proveedores/');
+      if (response is List) return response.map((e) => e.toString()).toList();
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // La nueva búsqueda ultrarrápida
+  Future<List<dynamic>> buscarRapido(String query, {String? proveedor}) async {
+    try {
+      final params = {'q': query};
+      if (proveedor != null && proveedor.isNotEmpty) {
+        params['proveedor'] = proveedor;
+      }
+      final response = await _apiClient.get(
+        '/api/proveedores/buscar-rapido',
+        queryParameters: params,
+      );
+
+      if (response is List) return response;
+      if (response is Map && response.containsKey('data'))
+        return response['data'];
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
 }

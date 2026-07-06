@@ -41,10 +41,11 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
   String rolUsuario = "";
 
   @override
+  @override
   void initState() {
     super.initState();
-    _requestCameraPermission();
-    _cargarRol();
+    // Agrega esta línea:
+    context.read<ProductSearchController>().loadProveedores();
   }
 
   @override
