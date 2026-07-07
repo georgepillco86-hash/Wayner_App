@@ -42,10 +42,11 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
 
   @override
   @override
+  @override
   void initState() {
     super.initState();
-    // Agrega esta línea:
-    context.read<ProductSearchController>().loadProveedores();
+    _cargarRol(); // <--- ¡FALTABA ESTO! Sin esto, nadie es Admin ni Bodeguero.
+    context.read<ProductSearchController>().loadInitialData();
   }
 
   @override
@@ -395,89 +396,94 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
   }
 
   Widget _buildProviderFilter(ProductSearchController controller) {
-    return Autocomplete<String>(
-      optionsBuilder: (TextEditingValue textEditingValue) {
-        final query = textEditingValue.text.trim().toLowerCase();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Autocomplete<String>(
+          optionsBuilder: (TextEditingValue textEditingValue) {
+            final query = textEditingValue.text.trim().toLowerCase();
 
-        if (query.isEmpty) {
-          return controller.providers.take(20);
-        }
-
-        return controller.providers.where(
-          (proveedor) => proveedor.toLowerCase().contains(query),
-        );
-      },
-      displayStringForOption: (option) => option,
-      onSelected: (String proveedor) {
-        controller.filterByProvider(proveedor);
-      },
-      fieldViewBuilder:
-          (context, textEditingController, focusNode, onFieldSubmitted) {
-            if (controller.selectedProvider != null &&
-                textEditingController.text != controller.selectedProvider) {
-              textEditingController.text = controller.selectedProvider!;
+            if (query.isEmpty) {
+              return controller.providers.take(20);
             }
 
-            return TextField(
-              controller: textEditingController,
-              focusNode: focusNode,
-              decoration: InputDecoration(
-                labelText: 'Filtrar por proveedor',
-                hintText: 'Escriba el nombre del proveedor',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.local_shipping_outlined),
-                suffixIcon: controller.selectedProvider == null
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          textEditingController.clear();
-                          controller.filterByProvider(null);
-                        },
-                      ),
-              ),
-              onSubmitted: (value) {
-                final cleanValue = value.trim();
-
-                if (cleanValue.isEmpty) {
-                  controller.filterByProvider(null);
-                  return;
-                }
-
-                final match = controller.providers.where(
-                  (proveedor) =>
-                      proveedor.toLowerCase() == cleanValue.toLowerCase(),
-                );
-
-                if (match.isNotEmpty) {
-                  controller.filterByProvider(match.first);
-                }
-              },
+            return controller.providers.where(
+              (proveedor) => proveedor.toLowerCase().contains(query),
             );
           },
-      optionsViewBuilder: (context, onSelected, options) {
-        return Align(
-          alignment: Alignment.topLeft,
-          child: Material(
-            elevation: 4,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 260, maxWidth: 420),
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount: options.length,
-                itemBuilder: (context, index) {
-                  final proveedor = options.elementAt(index);
+          displayStringForOption: (option) => option,
+          onSelected: (String proveedor) {
+            controller.filterByProvider(proveedor);
+          },
+          fieldViewBuilder:
+              (context, textEditingController, focusNode, onFieldSubmitted) {
+                // Sincroniza el texto si el proveedor cambia externamente o se limpia
+                if (controller.selectedProvider == null) {
+                  textEditingController.clear();
+                } else if (textEditingController.text !=
+                    controller.selectedProvider) {
+                  textEditingController.text = controller.selectedProvider!;
+                }
 
-                  return ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.local_shipping_outlined),
-                    title: Text(proveedor, overflow: TextOverflow.ellipsis),
-                    onTap: () => onSelected(proveedor),
-                  );
-                },
+                return TextField(
+                  controller: textEditingController,
+                  focusNode: focusNode,
+                  decoration: InputDecoration(
+                    labelText: 'Filtrar por proveedor',
+                    hintText: 'Escriba el nombre del proveedor',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.local_shipping_outlined),
+                    suffixIcon: controller.selectedProvider == null
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              textEditingController.clear();
+                              controller.filterByProvider(null);
+                            },
+                          ),
+                  ),
+                );
+              },
+          optionsViewBuilder: (context, onSelected, options) {
+            return Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(4),
+                child: Container(
+                  // FORZAMOS a que la lista mida exactamente lo mismo que el input
+                  width: constraints.maxWidth,
+
+                  // ---> CORRECCIÓN AQUÍ <---
+                  constraints: const BoxConstraints(maxHeight: 250),
+
+                  color: Theme.of(context).colorScheme.surface,
+                  child: ListView.builder(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      final String option = options.elementAt(index);
+                      return InkWell(
+                        onTap: () => onSelected(option),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16.0,
+                            vertical: 14.0,
+                          ),
+                          child: Text(
+                            option,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
@@ -546,13 +552,19 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
             subtitle: const Text(
               'Útil si el producto es nuevo y no aparece en la lista.',
             ),
-            value: _busquedaProfunda,
+            value: controller.isDeepSearch,
             onChanged: (bool value) {
-              setState(() {
-                _busquedaProfunda = value;
-                // Si quieres que busque automáticamente al encender el switch, descomenta la siguiente línea:
-                // if (_searchController.text.isNotEmpty) controller.search(_searchController.text);
-              });
+              // 1. Actualizamos el estado del modo en el controlador
+              controller.isDeepSearch = value;
+
+              // 2. Si hay texto escrito en el buscador, ejecutamos la búsqueda en tiempo real
+              final textoActual = _searchController.text.trim();
+              if (textoActual.isNotEmpty) {
+                controller.search(textoActual);
+              } else {
+                // Si está vacío, solo refresca el estado del componente
+                controller.toggleDeepSearch(value);
+              }
             },
           ),
           Padding(
@@ -620,30 +632,57 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                     itemBuilder: (context, index) {
                       final product = controller.products[index];
 
-                      // ---> ESTE ES TU CÓDIGO ACTUALIZADO <---
                       return InkWell(
                         onTap: () async {
-                          // 1. Instancias el servicio que acabas de importar
-                          final apiService = SaldosApiService();
-
-                          // 2. Traes los datos vivos del backend usando el código del producto
-                          final datosVivos = await apiService.obtenerPrecioVivo(
-                            product.codigo,
-                          );
-
-                          // 3. Actualizas el producto localmente
-                          product.precio = datosVivos['precio_vivo'];
-                          product.iva = datosVivos['iva_vivo'];
-                          product.costo = datosVivos['costo_vivo'];
-
-                          // 4. Abres la pantalla de detalle
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  ProductDetailScreen(product: product),
+                          // 1. Mostrar un loader para que la app no parezca trabada
+                          showDialog(
+                            context: context,
+                            barrierDismissible:
+                                false, // Evita que se cierre tocando afuera
+                            builder: (_) => const Center(
+                              child: CircularProgressIndicator(),
                             ),
                           );
+
+                          try {
+                            // 2. Instancias el servicio
+                            final apiService = SaldosApiService();
+
+                            // 3. Traes los datos vivos del backend usando el código del producto
+                            final datosVivos = await apiService
+                                .obtenerPrecioVivo(product.codigo);
+
+                            // 4. Actualizas el producto localmente
+                            product.precio = datosVivos['precio_vivo'];
+                            product.iva = datosVivos['iva_vivo'];
+                            product.costo = datosVivos['costo_vivo'];
+
+                            // 5. Cerrar el loader
+                            if (context.mounted) Navigator.pop(context);
+
+                            // 6. Abres la pantalla de detalle
+                            if (context.mounted) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      ProductDetailScreen(product: product),
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            // Si hay un error, cerramos el loader
+                            if (context.mounted) Navigator.pop(context);
+
+                            // Y mostramos un mensaje al usuario
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error al obtener datos: $e'),
+                                ),
+                              );
+                            }
+                          }
                         },
                         child: ProductCard(product: product),
                       );

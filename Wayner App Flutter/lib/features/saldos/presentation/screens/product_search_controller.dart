@@ -63,6 +63,15 @@ class ProductSearchController extends ChangeNotifier {
     }
   }
 
+  // --- NUEVO: Método para reintentar/refrescar la pantalla ---
+  void refresh() {
+    if (_lastSearchText != null && _lastSearchText!.isNotEmpty) {
+      search(_lastSearchText!);
+    } else {
+      loadInitialData(forceRefresh: true);
+    }
+  }
+
   Future<void> search(String text) async {
     final cleanText = text.trim();
 
