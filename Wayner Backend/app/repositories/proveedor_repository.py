@@ -1,5 +1,6 @@
 from typing import List
-from app.core.pedidos_database import pedidos_db 
+from app.core.database import db # <--- ¡NUEVO IMPORT! Conexión a ferrotienda
+from app.core.pedidos_database import pedidos_db
 
 class ProveedorRepository:
     def get_proveedores_list(self) -> List[str]:
@@ -30,6 +31,7 @@ class ProveedorRepository:
             return {"precio_vivo": 0, "iva_vivo": 0, "costo_vivo": 0}
 
     # ---> NUEVA BÚSQUEDA RÁPIDA (ESPEJO) <---
+    # ---> NUEVA BÚSQUEDA RÁPIDA (ESPEJO) <---
     def buscar_rapido_proveedores(self, termino: str, proveedor_especifico: str = None) -> list:
         tablas = [proveedor_especifico] if proveedor_especifico else self.get_proveedores_list()
         if not tablas: return []
@@ -37,21 +39,27 @@ class ProveedorRepository:
         termino_sql = f"%{termino}%"
         queries = []
         for tabla in tablas:
+            # CORRECCIÓN: Se usan los nombres exactos creados en el servicio espejo (codigo_barra, nombre_producto, etc)
             queries.append(f"""
-            SELECT Codigo AS "Codigo", CodigoBarra AS "CodigoBarra", NombreProducto AS "Nombre", 
-                   '{tabla}' AS "Proveedor", 0 AS "Stock", Precio AS "Precio", IVA AS "IVA", Costo AS "Costo"
+            SELECT codigo AS "Codigo", codigo_barra AS "CodigoBarra", nombre_producto AS "Nombre", 
+                   '{tabla}' AS "Proveedor", 0 AS "Stock", precio AS "Precio", iva AS "IVA", costo AS "Costo"
             FROM p_proveedores."{tabla}"
-            WHERE NombreProducto ILIKE %s OR Codigo ILIKE %s
+            WHERE nombre_producto ILIKE %s OR codigo ILIKE %s OR codigo_barra ILIKE %s
             """)
         
         full_query = " UNION ALL ".join(queries) + " LIMIT 50"
-        params = tuple([termino_sql, termino_sql] * len(tablas))
+        
+        # CORRECCIÓN: Como ahora buscamos en 3 columnas (nombre, codigo, codigo_barra), pasamos el parámetro 3 veces por cada tabla
+        params = tuple([termino_sql, termino_sql, termino_sql] * len(tablas))
+        
         try:
             return pedidos_db.fetch_all(full_query, params)
         except Exception as e:
             print("❌ ERROR EN BÚSQUEDA RÁPIDA:", e)
             return []
 
+    # ---> BÚSQUEDA PROFUNDA (KARDEX) <---
+    # ---> BÚSQUEDA PROFUNDA (KARDEX) <---
     # ---> BÚSQUEDA PROFUNDA (KARDEX) <---
     def busqueda_profunda_kardex(self, termino: str) -> list:
         termino_sql = f"%{termino}%"
@@ -60,11 +68,12 @@ class ProveedorRepository:
                MAX(NombreProveedor) AS "Proveedor", 0 AS "Stock", MAX(Precio) AS "Precio", 
                MAX(IVA) AS "IVA", MAX(Costo) AS "Costo"
         FROM v_kardexproductos
-        WHERE NombreProducto ILIKE %s OR Codigo ILIKE %s
+        WHERE NombreProducto LIKE %s OR Codigo LIKE %s OR CodigoBarra LIKE %s
         GROUP BY Codigo LIMIT 50
         """
         try:
-            return pedidos_db.fetch_all(query, (termino_sql, termino_sql))
+            # CORRECCIÓN: Se utiliza LIKE en lugar de ILIKE para compatibilidad con MySQL
+            return db.fetch_all(query, (termino_sql, termino_sql, termino_sql))
         except Exception as e:
             print("❌ ERROR EN BÚSQUEDA PROFUNDA:", e)
             return []
