@@ -1,5 +1,6 @@
 class ProductBalance {
   final String codigo;
+  final String? codigoBarra; // <-- 1. Agregamos la propiedad
   final String nombre;
   final double stock;
   final String? marca;
@@ -12,6 +13,7 @@ class ProductBalance {
 
   ProductBalance({
     required this.codigo,
+    this.codigoBarra, // <-- 2. Lo requerimos en el constructor
     required this.nombre,
     required this.stock,
     this.marca,
@@ -24,6 +26,8 @@ class ProductBalance {
   factory ProductBalance.fromJson(Map<String, dynamic> json) {
     return ProductBalance(
       codigo: json['Codigo']?.toString() ?? '',
+      codigoBarra: json['CodigoBarra']
+          ?.toString(), // <-- 3. Lo extraemos del JSON
       nombre: json['Nombre']?.toString() ?? '',
       stock: double.tryParse(json['Stock']?.toString() ?? '0') ?? 0.0,
       marca: json['Marca']?.toString(),
@@ -37,6 +41,7 @@ class ProductBalance {
   Map<String, dynamic> toJson() {
     return {
       'Codigo': codigo,
+      'CodigoBarra': codigoBarra, // <-- 4. Lo incluimos al serializar
       'Nombre': nombre,
       'Stock': stock,
       'Marca': marca,
