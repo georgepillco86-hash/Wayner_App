@@ -68,33 +68,17 @@ class SaldoProductRepository:
 
         params: list[Any] = []
 
+        # CORRECCIÓN: Filtramos correctamente por proveedor buscando en el Kardex
         if proveedor:
-            query = f"""
-            SELECT
-                s.Codigo,
-                s.Nombre,
-                s.Stock,
-                s.Marca,
-                s.Clase,
-                COALESCE(p.PrecioFinal, 0) AS Precio
-            FROM {self.TABLE_NAME} s
-            LEFT JOIN (
-                SELECT 
-                    TRIM(Codigo) AS CodigoClean, 
-                    MAX(
-                        CASE 
-                            WHEN COALESCE(IVA, 0) > 0 THEN {self.COLUMNA_PRECIO} * 1.15 
-                            ELSE {self.COLUMNA_PRECIO} 
-                        END
-                    ) AS PrecioFinal
-                FROM {self.PRECIOS_TABLE}
-                GROUP BY TRIM(Codigo)
-            ) p ON TRIM(s.Codigo) = p.CodigoClean
-            WHERE (
-                s.Codigo LIKE %s
-                OR s.Nombre LIKE %s
-                OR s.Marca LIKE %s
-                OR s.Clase LIKE %s
+            query += """
+            WHERE EXISTS (
+                SELECT 1
+                FROM v_kardexproductos k
+                WHERE k.Codigo = s.Codigo
+                AND k.NombreProveedor IS NOT NULL
+                AND TRIM(k.NombreProveedor) <> ''
+                AND UPPER(TRIM(k.NombreProveedor)) <> 'DUCHI SANCHEZ ROSA EMPERATRIZ'
+                AND k.NombreProveedor = %s
             )
             """
             params.append(proveedor)

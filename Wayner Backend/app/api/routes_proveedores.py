@@ -33,7 +33,11 @@ async def buscar_en_kardex(q: str):
     return productos
 
 @router.get("/buscar-rapido")
-async def buscar_rapido(q: str, proveedor: Optional[str] = None):
-    """Busca instantáneamente en las tablas espejo de p_proveedores"""
-    if len(q) < 2: return []
+def buscar_rapido(q: str = "", proveedor: Optional[str] = None):
+    """Busca instantáneamente en las tablas espejo y cruza con datos vivos"""
+    
+    # 🚨 CAMBIO AQUÍ: Solo bloqueamos la búsqueda si NO escribiste nada Y TAMPOCO elegiste proveedor
+    if len(q) < 2 and not proveedor:
+        return []
+        
     return proveedor_repo.buscar_rapido_proveedores(q, proveedor)
