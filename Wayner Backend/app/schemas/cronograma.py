@@ -6,6 +6,7 @@ class CronogramaCreate(BaseModel):
     proveedor: str
     frecuencia: int
     fecha_inicio: datetime
+    fecha_entrega: Optional[datetime] = None
     usuarios_vinculados: List[str]
 
 class NotificacionResponse(BaseModel):

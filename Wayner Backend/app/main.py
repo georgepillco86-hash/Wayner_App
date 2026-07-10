@@ -43,6 +43,7 @@ app.add_middleware(AuditLogMiddleware)
 
 @app.on_event("startup")
 async def startup_event():
+    await ProviderMirrorService.sincronizar_espejo()
     # 1. Inicia el bucle de sincronización de proveedores (Espejo)
     asyncio.create_task(ProviderMirrorService.iniciar_bucle_sincronizacion())
     
@@ -98,3 +99,4 @@ app.include_router(mermas_router, prefix=f"{settings.api_prefix}/mermas", tags=[
 # Rutas Nuevas
 app.include_router(proveedores_router, prefix="/api/proveedores", tags=["Proveedores"])
 app.include_router(cronogramas_router, prefix="/api/cronograma", tags=["Cronograma"])
+

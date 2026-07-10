@@ -8,8 +8,11 @@ proveedor_repo = ProveedorRepository()
 
 @router.get("/")
 async def listar_proveedores():
-    proveedores = proveedor_repo.get_proveedores_list()
-    return proveedores
+    return proveedor_repo.get_proveedores_list()
+
+@router.get("/clases")
+async def listar_clases():
+    return proveedor_repo.get_clases_list()
 
 @router.get("/{nombre_proveedor}/productos")
 async def listar_productos_proveedor(nombre_proveedor: str):
@@ -33,11 +36,20 @@ async def buscar_en_kardex(q: str):
     return productos
 
 @router.get("/buscar-rapido")
-def buscar_rapido(q: str = "", proveedor: Optional[str] = None):
+def buscar_rapido(
+    q: str = "", 
+    proveedor: Optional[str] = None,
+    clase: Optional[str] = None  # ---> NUEVO: Recibimos la clase
+):
     """Busca instantáneamente en las tablas espejo y cruza con datos vivos"""
     
-    # 🚨 CAMBIO AQUÍ: Solo bloqueamos la búsqueda si NO escribiste nada Y TAMPOCO elegiste proveedor
-    if len(q) < 2 and not proveedor:
+    # 🚨 CAMBIO AQUÍ: Bloqueamos la búsqueda solo si NO hay texto, NO hay proveedor y NO hay clase
+    if len(q) < 2 and not proveedor and not clase:
         return []
         
-    return proveedor_repo.buscar_rapido_proveedores(q, proveedor)
+    # Pasamos los 3 parámetros (nombrados para evitar confusiones de posición)
+    return proveedor_repo.buscar_rapido_proveedores(
+        termino=q, 
+        proveedor_especifico=proveedor, 
+        clase_especifica=clase
+    )
