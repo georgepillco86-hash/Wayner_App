@@ -17,15 +17,19 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
   final _usuariosService = UsuariosService();
 
   final _proveedorController = TextEditingController();
-  DateTime? _fechaSeleccionada;
-  TimeOfDay? _horaSeleccionada;
+
+  // ---> MODIFICADO: Variables para manejar ambas fechas <---
+  DateTime? _fechaSeleccionada; // Fecha de Visita
+  TimeOfDay? _horaSeleccionada; // Hora de Visita
+  DateTime? _fechaEntregaSeleccionada; // Fecha de Entrega de mercadería
+
   int _frecuenciaSeleccionada = 1;
 
   List<Usuario> _usuariosDb = [];
-  List<String> _proveedoresDb = []; // <-- NUEVO: Lista de proveedores
+  List<String> _proveedoresDb = [];
   final List<String> _usuariosVinculados = [];
 
-  bool _isLoading = true; // Inicia en true para mostrar la carga al abrir
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -33,7 +37,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
     _cargarDatosIniciales();
   }
 
-  // --- NUEVO: Carga usuarios y proveedores al mismo tiempo ---
   Future<void> _cargarDatosIniciales() async {
     try {
       final usuarios = await _usuariosService.listarUsuarios();
@@ -56,10 +59,11 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
     }
   }
 
+  // 1. Selector de Fecha de VISITA
   Future<void> _seleccionarFechaHora() async {
     final fecha = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
+      initialDate: _fechaSeleccionada ?? DateTime.now(),
       firstDate: DateTime.now(),
       lastDate: DateTime(2030),
     );
@@ -75,18 +79,51 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
     setState(() {
       _fechaSeleccionada = fecha;
       _horaSeleccionada = hora;
+
+      // Si ya había una fecha de entrega y resulta que ahora es ANTES de la nueva visita, la borramos
+      if (_fechaEntregaSeleccionada != null &&
+          _fechaEntregaSeleccionada!.isBefore(_fechaSeleccionada!)) {
+        _fechaEntregaSeleccionada = null;
+      }
     });
   }
 
+  // 2. ---> NUEVO: Selector de Fecha de ENTREGA <---
+  Future<void> _seleccionarFechaEntrega() async {
+    if (_fechaSeleccionada == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Primero selecciona la fecha de visita del proveedor'),
+        ),
+      );
+      return;
+    }
+
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _fechaEntregaSeleccionada ?? _fechaSeleccionada!,
+      // Bloqueamos el calendario para que no puedan elegir un día antes de la visita
+      firstDate: _fechaSeleccionada!,
+      lastDate: DateTime(2030),
+    );
+    if (picked != null) {
+      setState(() {
+        _fechaEntregaSeleccionada = picked;
+      });
+    }
+  }
+
   Future<void> _guardar() async {
+    // Validamos que todos los campos estén llenos, incluyendo la entrega
     if (_proveedorController.text.isEmpty ||
         _fechaSeleccionada == null ||
         _horaSeleccionada == null ||
+        _fechaEntregaSeleccionada == null || // <-- Validación añadida
         _usuariosVinculados.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Por favor complete todos los campos y asigne al menos un usuario.',
+            'Por favor complete todos los campos (Visita y Entrega) y asigne al menos un usuario.',
           ),
         ),
       );
@@ -103,11 +140,22 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
       _horaSeleccionada!.minute,
     );
 
+    // Formateamos la fecha de entrega con una hora por defecto (ej: 12:00 PM)
+    final fechaEntregaCompleta = DateTime(
+      _fechaEntregaSeleccionada!.year,
+      _fechaEntregaSeleccionada!.month,
+      _fechaEntregaSeleccionada!.day,
+      12,
+      0,
+    );
+
     try {
       await _cronogramaService.crearProgramacion(
         proveedor: _proveedorController.text,
         frecuencia: _frecuenciaSeleccionada,
         fechaInicio: fechaCompleta,
+        // ---> NUEVO: Pasamos la fecha de entrega al servicio <---
+        fechaEntrega: fechaEntregaCompleta,
         usuariosVinculados: _usuariosVinculados,
       );
       widget.onSaved();
@@ -125,29 +173,24 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Programar Pedido')),
       body: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(),
-            ) // Muestra cargando mientras trae los datos de BD
+          ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // --- NUEVO: Menú Autocompletable de Proveedores ---
                   LayoutBuilder(
                     builder: (context, constraints) {
                       return DropdownMenu<String>(
-                        width: constraints
-                            .maxWidth, // Ocupa todo el ancho disponible
+                        width: constraints.maxWidth,
                         controller: _proveedorController,
-                        enableFilter: true, // ¡La magia del buscador!
+                        enableFilter: true,
                         requestFocusOnTap: true,
                         label: const Text('Nombre del Proveedor'),
                         leadingIcon: const Icon(Icons.business),
                         inputDecorationTheme: const InputDecorationTheme(
                           border: OutlineInputBorder(),
                         ),
-                        // Transforma la lista de strings en opciones del menú
                         dropdownMenuEntries: _proveedoresDb.map((prov) {
                           return DropdownMenuEntry<String>(
                             value: prov,
@@ -159,7 +202,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // Frecuencia
                   DropdownButtonFormField<int>(
                     value: _frecuenciaSeleccionada,
                     decoration: const InputDecoration(
@@ -185,7 +227,8 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // Fecha y Hora
+                  // ---> UI ACTUALIZADA: Dos botones para las fechas <---
+                  // 1. Botón de Visita
                   ListTile(
                     shape: RoundedRectangleBorder(
                       side: const BorderSide(color: Colors.grey),
@@ -197,10 +240,29 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                     ),
                     title: Text(
                       _fechaSeleccionada == null
-                          ? 'Seleccionar Fecha y Hora'
-                          : 'Inicio: ${DateFormat('dd/MM/yyyy').format(_fechaSeleccionada!)} a las ${_horaSeleccionada!.format(context)}',
+                          ? '1. Seleccionar Día de Visita'
+                          : 'Visita: ${DateFormat('dd/MM/yyyy').format(_fechaSeleccionada!)} a las ${_horaSeleccionada!.format(context)}',
                     ),
                     onTap: _seleccionarFechaHora,
+                  ),
+                  const SizedBox(height: 12),
+
+                  // 2. Botón de Entrega
+                  ListTile(
+                    shape: RoundedRectangleBorder(
+                      side: const BorderSide(color: Colors.grey),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    leading: const Icon(
+                      Icons.local_shipping,
+                      color: Colors.green,
+                    ),
+                    title: Text(
+                      _fechaEntregaSeleccionada == null
+                          ? '2. Seleccionar Día de Entrega'
+                          : 'Llegada: ${DateFormat('dd/MM/yyyy').format(_fechaEntregaSeleccionada!)}',
+                    ),
+                    onTap: _seleccionarFechaEntrega,
                   ),
                   const SizedBox(height: 24),
 

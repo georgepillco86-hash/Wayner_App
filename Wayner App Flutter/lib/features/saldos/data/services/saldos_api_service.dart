@@ -25,25 +25,63 @@ class SaldosApiService {
     return null;
   }
 
+  // 🔥 1. EL CAMBIO MAESTRO: Redirigimos la búsqueda principal al motor Predictivo
   Future<List<ProductBalance>> searchProducts({
     required String text,
     String? clase,
     String? proveedor,
-    int limit = 20,
+    int limit = 50,
   }) async {
-    final response = await _apiClient.get(
-      '${ApiConfig.saldosBasePath}/buscar',
-      queryParameters: {
-        'texto': text,
-        if (clase != null && clase.isNotEmpty) 'clase': clase,
-        if (proveedor != null && proveedor.isNotEmpty) 'proveedor': proveedor,
-        'limit': limit,
-      },
-    );
+    try {
+      final params = <String, dynamic>{'q': text};
 
-    return _extractData(
-      response,
-    ).whereType<Map<String, dynamic>>().map(ProductBalance.fromJson).toList();
+      if (clase != null && clase.isNotEmpty) params['clase'] = clase;
+      if (proveedor != null && proveedor.isNotEmpty)
+        params['proveedor'] = proveedor;
+
+      // ¡AQUÍ ESTÁ LA MAGIA! Apuntamos a la ruta rápida e inteligente
+      final response = await _apiClient.get(
+        '/api/proveedores/buscar-rapido',
+        queryParameters: params,
+      );
+
+      List<dynamic> data = [];
+      if (response is List) {
+        data = response;
+      } else if (response is Map && response.containsKey('data')) {
+        data = response['data'];
+      }
+
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(ProductBalance.fromJson)
+          .toList();
+    } catch (e) {
+      print("❌ ERROR EN SEARCH PRODUCTS (MOTOR PREDICTIVO): $e");
+      return [];
+    }
+  }
+
+  // 🔥 2. Redirigimos Dataset para que también traiga el VDP al abrir la pantalla
+  Future<List<ProductBalance>> getDataset({
+    int limit = 50,
+    String? proveedor,
+  }) async {
+    return searchProducts(text: '', proveedor: proveedor, limit: limit);
+  }
+
+  // 🔥 3. Redirigimos la búsqueda por clase para que traiga el VDP
+  Future<List<ProductBalance>> getProductsByClass(
+    String clase, {
+    int limit = 50,
+    String? proveedor,
+  }) async {
+    return searchProducts(
+      text: '',
+      clase: clase,
+      proveedor: proveedor,
+      limit: limit,
+    );
   }
 
   Future<ProductBalance?> getProductByCode(String code) async {
@@ -55,24 +93,6 @@ class SaldosApiService {
     return ProductBalance.fromJson(data);
   }
 
-  Future<List<ProductBalance>> getDataset({
-    int limit = 20,
-    String? proveedor,
-  }) async {
-    final response = await _apiClient.get(
-      '${ApiConfig.saldosBasePath}/dataset',
-      queryParameters: {
-        'limit': limit,
-        if (proveedor != null && proveedor.isNotEmpty) 'proveedor': proveedor,
-      },
-    );
-
-    return _extractData(
-      response,
-    ).whereType<Map<String, dynamic>>().map(ProductBalance.fromJson).toList();
-  }
-
-  // 1. Obtener clases ahora usa la ruta rápida de PostgreSQL
   Future<List<String>> getClasses() async {
     try {
       final response = await _apiClient.get('/api/proveedores/clases');
@@ -84,7 +104,6 @@ class SaldosApiService {
     }
   }
 
-  // 2. Obtener proveedores ahora usa la ruta rápida de PostgreSQL
   Future<List<String>> getProviders() async {
     try {
       final response = await _apiClient.get('/api/proveedores/');
@@ -94,24 +113,6 @@ class SaldosApiService {
       print("❌ ERROR AL CARGAR PROVEEDORES EN FLUTTER: $e");
       return [];
     }
-  }
-
-  Future<List<ProductBalance>> getProductsByClass(
-    String clase, {
-    int limit = 20,
-    String? proveedor,
-  }) async {
-    final response = await _apiClient.get(
-      '${ApiConfig.saldosBasePath}/clase/$clase',
-      queryParameters: {
-        'limit': limit,
-        if (proveedor != null && proveedor.isNotEmpty) 'proveedor': proveedor,
-      },
-    );
-
-    return _extractData(
-      response,
-    ).whereType<Map<String, dynamic>>().map(ProductBalance.fromJson).toList();
   }
 
   Future<List<SalesSummary>> getSalesSummary(
@@ -158,7 +159,6 @@ class SaldosApiService {
     return _extractData(response).whereType<Map<String, dynamic>>().toList();
   }
 
-  // 1. Búsqueda profunda de emergencia en Kardex
   Future<List<dynamic>> busquedaProfundaKardex(String termino) async {
     try {
       final response = await _apiClient.get(
@@ -174,7 +174,6 @@ class SaldosApiService {
     }
   }
 
-  // 2. Consulta ultrarrápida del precio en vivo
   Future<Map<String, dynamic>> obtenerPrecioVivo(String codigo) async {
     try {
       final response = await _apiClient.get(
@@ -191,48 +190,12 @@ class SaldosApiService {
     }
   }
 
-  // Obtener la lista de proveedores para el menú desplegable
   Future<List<String>> obtenerProveedores() async {
     try {
       final response = await _apiClient.get('/api/proveedores/');
       if (response is List) return response.map((e) => e.toString()).toList();
       return [];
     } catch (e) {
-      return [];
-    }
-  }
-
-  // --- CORREGIDO: La nueva búsqueda ultrarrápida ahora acepta 'clase' ---
-  Future<List<dynamic>> buscarRapido(
-    String query, {
-    String? proveedor,
-    String? clase,
-  }) async {
-    try {
-      final params = {'q': query};
-
-      if (proveedor != null && proveedor.isNotEmpty) {
-        params['proveedor'] = proveedor;
-      }
-
-      if (clase != null && clase.isNotEmpty) {
-        params['clase'] = clase;
-      }
-
-      final response = await _apiClient.get(
-        '/api/proveedores/buscar-rapido',
-        queryParameters: params,
-      );
-
-      if (response is List) return response;
-      if (response is Map && response.containsKey('data')) {
-        return response['data'];
-      }
-      return [];
-    } catch (e, stacktrace) {
-      // 🚨 AQUÍ ESTABA LA TRAMPA: Flutter ocultaba el error. Ahora lo veremos.
-      print("❌ ERROR FATAL EN BUSCAR RAPIDO (FLUTTER): $e");
-      print(stacktrace);
       return [];
     }
   }

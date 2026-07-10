@@ -21,6 +21,7 @@ class CronogramaService {
     required String proveedor,
     required int frecuencia,
     required DateTime fechaInicio,
+    required DateTime fechaEntrega, // ---> NUEVO PARÁMETRO
     required List<String> usuariosVinculados,
   }) async {
     final response = await http.post(
@@ -31,6 +32,8 @@ class CronogramaService {
         'frecuencia': frecuencia,
         'fecha_inicio': fechaInicio
             .toIso8601String(), // Formato seguro para el backend
+        'fecha_entrega': fechaEntrega
+            .toIso8601String(), // ---> NUEVA PROPIEDAD AL PAYLOAD
         'usuarios_vinculados': usuariosVinculados,
       }),
     );
@@ -76,7 +79,7 @@ class CronogramaService {
     return response.statusCode == 200;
   }
 
-  // --- NUEVO: Obtener lista de proveedores para el autocompletado ---
+  // --- Obtener lista de proveedores para el autocompletado ---
   Future<List<String>> obtenerProveedores() async {
     // Apuntamos al endpoint de proveedores que creamos en Python
     final url = baseUrl.replaceAll('/cronograma', '/proveedores');
