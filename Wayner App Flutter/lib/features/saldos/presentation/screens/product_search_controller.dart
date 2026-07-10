@@ -32,12 +32,25 @@ class ProductSearchController extends ChangeNotifier {
   String? _lastSearchProvider;
   bool _initialDataLoaded = false;
 
-  // Alternar Búsqueda
-  void toggleDeepSearch(bool value) {
+  // Alternar Búsqueda (CORREGIDO)
+  Future<void> toggleDeepSearch(bool value) async {
     isDeepSearch = value;
     notifyListeners();
-    // Si ya había una búsqueda, la actualiza con el nuevo modo
-    if (_lastSearchText != null) search(_lastSearchText!);
+
+    // Si cambiamos de modo, la lista maestra anterior ya no sirve.
+    // Recargamos los datos respetando los filtros que el usuario tenga activos.
+    if (selectedProvider != null) {
+      await filterByProvider(selectedProvider);
+    } else if (selectedClass != null) {
+      await filterByClass(selectedClass);
+    } else {
+      await loadDataset(forceRefresh: true, keepFilters: true);
+    }
+
+    // Si había texto en el buscador, lo reaplicamos localmente
+    if (_lastSearchText != null && _lastSearchText!.isNotEmpty) {
+      await search(_lastSearchText!);
+    }
   }
 
   Future<void> loadInitialData({bool forceRefresh = false}) async {
@@ -48,20 +61,39 @@ class ProductSearchController extends ChangeNotifier {
       final results = await Future.wait([
         _service.getClasses(),
         _service.getProviders(),
-        _service.getDataset(limit: 20),
+        isDeepSearch
+            ? _service.getDataset(limit: 200)
+            : _service.buscarRapido(''),
       ]);
 
       classes = results[0] as List<String>;
       providers = results[1] as List<String>;
-      products = results[2] as List<ProductBalance>;
 
-      // Guardamos la base inicial en la lista maestra
+      // --- CORRECCIÓN DEL PARSEO PARA EVITAR CRASH SILENCIOSO ---
+      final rawProducts = results[2] as List<dynamic>;
+
+      if (rawProducts.isNotEmpty) {
+        try {
+          products = rawProducts
+              .map(
+                (json) =>
+                    ProductBalance.fromJson(Map<String, dynamic>.from(json)),
+              )
+              .toList();
+        } catch (parseError) {
+          print("❌ ERROR CONVIRTIENDO PRODUCTOS EN FLUTTER: $parseError");
+          products = [];
+        }
+      } else {
+        products = [];
+      }
+
       _masterProductsList = List.from(products);
-
       _initialDataLoaded = true;
       _clearError();
       notifyListeners();
     } catch (e) {
+      print("❌ ERROR GENERAL EN LOAD INITIAL DATA: $e");
       products = [];
       _setError(e);
     } finally {
@@ -78,24 +110,22 @@ class ProductSearchController extends ChangeNotifier {
   }
 
   Future<void> search(String text) async {
+    // 🛡️ ESCUDO: Si ya está buscando, ignora peticiones repetidas al servidor
+    if (isLoading) return;
+
     final cleanText = text.trim();
     final lowerQuery = cleanText.toLowerCase();
 
     // --- 1. FILTRADO LOCAL EN MEMORIA ---
-    // Si hay un Proveedor o una Clase seleccionada, filtramos la lista maestra.
     if (selectedProvider != null || selectedClass != null) {
       if (cleanText.isEmpty) {
         products = List.from(_masterProductsList);
       } else {
-        products = _masterProductsList.where((p) {
-          return p.nombre.toLowerCase().contains(lowerQuery) ||
-              p.codigo.toLowerCase().contains(lowerQuery) ||
-              (p.codigoBarra?.toLowerCase().contains(lowerQuery) ?? false);
-        }).toList();
+        _applyLocalSearchText(lowerQuery);
       }
       _lastSearchText = cleanText;
       notifyListeners();
-      return; // 🛑 Terminamos aquí, NO hacemos peticiones al servidor
+      return;
     }
 
     // --- 2. BÚSQUEDA GLOBAL AL SERVIDOR ---
@@ -107,13 +137,13 @@ class ProductSearchController extends ChangeNotifier {
     _setLoading(true);
     try {
       if (isDeepSearch) {
-        // Búsqueda en Kardex General
+        // Búsqueda en Kardex General (MySQL)
         final results = await _service.busquedaProfundaKardex(cleanText);
         products = results
             .map((json) => ProductBalance.fromJson(json))
             .toList();
       } else {
-        // Búsqueda Rápida en Proveedores (Espejo)
+        // Búsqueda Rápida en Proveedores (PostgreSQL)
         final results = await _service.buscarRapido(
           cleanText,
           proveedor: selectedProvider,
@@ -134,17 +164,34 @@ class ProductSearchController extends ChangeNotifier {
     }
   }
 
+  // Carga de Dataset base (CORREGIDO)
   Future<void> loadDataset({
     bool forceRefresh = false,
     bool keepFilters = false,
   }) async {
+    // 🛡️ ESCUDO: Evita cargar múltiples veces a la vez (salvo si forzamos recarga)
+    if (isLoading && !forceRefresh) return;
+
     _setLoading(true);
     try {
-      products = await _service.getDataset(
-        limit: 20,
-        proveedor: selectedProvider,
-      );
-      _masterProductsList = List.from(products); // Actualizamos memoria
+      if (isDeepSearch) {
+        // Va a MySQL
+        products = await _service.getDataset(
+          limit: 200,
+          proveedor: selectedProvider,
+        );
+      } else {
+        // Va a PostgreSQL
+        final results = await _service.buscarRapido(
+          '',
+          proveedor: selectedProvider,
+        );
+        products = results
+            .map((json) => ProductBalance.fromJson(json))
+            .toList();
+      }
+
+      _masterProductsList = List.from(products);
 
       if (!keepFilters) {
         selectedClass = null;
@@ -160,35 +207,43 @@ class ProductSearchController extends ChangeNotifier {
     }
   }
 
+  // Filtro por Clase (CORREGIDO)
   Future<void> filterByClass(String? clase) async {
+    // 🛡️ ESCUDO: Evita el spam si el usuario toca la clase repetidamente
+    if (isLoading) return;
+
     selectedClass = clase;
     if (clase == null || clase.isEmpty) {
       await loadDataset(forceRefresh: true, keepFilters: true);
       return;
     }
+
     _setLoading(true);
     try {
-      // Mandamos un límite muy alto para traer todos los productos de esa clase
-      products = await _service.getProductsByClass(
-        clase,
-        limit: 5000,
-        proveedor: selectedProvider,
-      );
-      _masterProductsList = List.from(
-        products,
-      ); // Guardamos para filtrar localmente
-
-      // Si ya había un texto escrito en el buscador, lo aplicamos de inmediato al nuevo filtro
-      if (_lastSearchText != null && _lastSearchText!.isNotEmpty) {
-        final lowerQuery = _lastSearchText!.toLowerCase();
-        products = _masterProductsList
-            .where(
-              (p) =>
-                  p.nombre.toLowerCase().contains(lowerQuery) ||
-                  p.codigo.toLowerCase().contains(lowerQuery) ||
-                  (p.codigoBarra?.toLowerCase().contains(lowerQuery) ?? false),
-            )
+      if (isDeepSearch) {
+        // MySQL: Filtra directo en saldos
+        products = await _service.getProductsByClass(
+          clase,
+          limit: 5000,
+          proveedor: selectedProvider,
+        );
+      } else {
+        // PostgreSQL: Asegúrate de que buscarRapido envíe el parámetro clase al backend
+        final results = await _service.buscarRapido(
+          '',
+          proveedor: selectedProvider,
+          clase: clase,
+        );
+        products = results
+            .map((json) => ProductBalance.fromJson(json))
             .toList();
+      }
+
+      _masterProductsList = List.from(products);
+
+      // Sub-filtro si ya había texto escrito
+      if (_lastSearchText != null && _lastSearchText!.isNotEmpty) {
+        _applyLocalSearchText(_lastSearchText!.toLowerCase());
       }
 
       notifyListeners();
@@ -199,7 +254,11 @@ class ProductSearchController extends ChangeNotifier {
     }
   }
 
+  // Filtro por Proveedor (CORREGIDO)
   Future<void> filterByProvider(String? proveedor) async {
+    // 🛡️ ESCUDO: Evita el spam si se selecciona proveedor repetidamente
+    if (isLoading) return;
+
     selectedProvider = proveedor;
 
     if (proveedor == null) {
@@ -209,24 +268,22 @@ class ProductSearchController extends ChangeNotifier {
 
     _setLoading(true);
     try {
-      // Buscamos TODOS los productos del proveedor.
-      // Al enviar texto vacío, el backend enviará todo sin límites.
-      final results = await _service.buscarRapido('', proveedor: proveedor);
-      products = results.map((json) => ProductBalance.fromJson(json)).toList();
-
-      _masterProductsList = List.from(products); // Guardamos la lista maestra
-
-      // Filtramos de inmediato si ya había texto en el buscador
-      if (_lastSearchText != null && _lastSearchText!.isNotEmpty) {
-        final lowerQuery = _lastSearchText!.toLowerCase();
-        products = _masterProductsList
-            .where(
-              (p) =>
-                  p.nombre.toLowerCase().contains(lowerQuery) ||
-                  p.codigo.toLowerCase().contains(lowerQuery) ||
-                  (p.codigoBarra?.toLowerCase().contains(lowerQuery) ?? false),
-            )
+      if (isDeepSearch) {
+        // MySQL: Búsqueda en kardex limitando por proveedor (dataset ya soporta proveedor en tu backend)
+        products = await _service.getDataset(limit: 5000, proveedor: proveedor);
+      } else {
+        // PostgreSQL: Catálogo espejo
+        final results = await _service.buscarRapido('', proveedor: proveedor);
+        products = results
+            .map((json) => ProductBalance.fromJson(json))
             .toList();
+      }
+
+      _masterProductsList = List.from(products);
+
+      // Sub-filtro si ya había texto escrito
+      if (_lastSearchText != null && _lastSearchText!.isNotEmpty) {
+        _applyLocalSearchText(_lastSearchText!.toLowerCase());
       }
 
       notifyListeners();
@@ -236,6 +293,15 @@ class ProductSearchController extends ChangeNotifier {
     } finally {
       _setLoading(false);
     }
+  }
+
+  // Método Helper para DRY (Don't Repeat Yourself)
+  void _applyLocalSearchText(String lowerQuery) {
+    products = _masterProductsList.where((p) {
+      return p.nombre.toLowerCase().contains(lowerQuery) ||
+          p.codigo.toLowerCase().contains(lowerQuery) ||
+          (p.codigoBarra?.toLowerCase().contains(lowerQuery) ?? false);
+    }).toList();
   }
 
   void _setLoading(bool value) {

@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../../../../core/storage/session_storage.dart';
 import '../../../saldos/data/models/product_balance.dart';
 import '../../../saldos/data/services/saldos_api_service.dart';
+// ---> NUEVA IMPORTACIÓN: El widget inteligente de la barra de stock <---
+import '../../../saldos/presentation/widgets/stock_health_bar.dart';
 import '../../data/models/sales_summary.dart';
 import '../widgets/sales_chart_widget.dart';
 
@@ -17,10 +19,7 @@ import '../../../printer/services/bluetooth_printer_service.dart';
 class ProductDetailScreen extends StatefulWidget {
   final ProductBalance product;
 
-  const ProductDetailScreen({
-    super.key,
-    required this.product,
-  });
+  const ProductDetailScreen({super.key, required this.product});
 
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
@@ -46,6 +45,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   final BluetoothPrinterService _printerService = BluetoothPrinterService();
   BluetoothInfo? _selectedPrinter;
+
+  // ---> NUEVA VARIABLE: Controla el tiempo de cobertura para el análisis <---
+  int _diasCobertura = 7;
 
   @override
   void initState() {
@@ -108,10 +110,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   double get _totalVendido {
-    return _sales.fold(
-      0,
-      (sum, item) => sum + item.cantidadVendida,
-    );
+    return _sales.fold(0, (sum, item) => sum + item.cantidadVendida);
   }
 
   Future<void> _pickKardexRangeAndLoad() async {
@@ -156,16 +155,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       if (rows.isEmpty && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No existen movimientos Kardex en el rango seleccionado'),
+            content: Text(
+              'No existen movimientos Kardex en el rango seleccionado',
+            ),
           ),
         );
       }
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     } finally {
       if (mounted) {
         setState(() {
@@ -200,9 +201,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       } else {
         _selectedPrinter = await Navigator.push<BluetoothInfo>(
           context,
-          MaterialPageRoute(
-            builder: (_) => const PrinterSelectionScreen(),
-          ),
+          MaterialPageRoute(builder: (_) => const PrinterSelectionScreen()),
         );
 
         if (_selectedPrinter == null) return;
@@ -217,16 +216,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            printed ? 'Cenefa enviada a imprimir' : 'No se pudo imprimir la cenefa',
+            printed
+                ? 'Cenefa enviada a imprimir'
+                : 'No se pudo imprimir la cenefa',
           ),
         ),
       );
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
@@ -279,9 +280,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 icon: Icon(
                   _mostrarKardex ? Icons.visibility_off : Icons.visibility,
                 ),
-                label: Text(
-                  _mostrarKardex ? 'Ocultar tabla' : 'Mostrar tabla',
-                ),
+                label: Text(_mostrarKardex ? 'Ocultar tabla' : 'Mostrar tabla'),
               ),
             ],
           ),
@@ -317,9 +316,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final product = widget.product;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Detalle del producto'),
-      ),
+      appBar: AppBar(title: const Text('Detalle del producto')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -341,13 +338,49 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   Text('Marca: ${product.marca ?? 'Sin marca'}'),
                   Text('Clase: ${product.clase ?? 'Sin clase'}'),
                   const Divider(height: 28),
-                  Text(
-                    'Stock final: ${product.stock}',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
+
+                  // ==========================================
+                  // SECCIÓN: INVENTARIO PREDICTIVO INTELIGENTE
+                  // ==========================================
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Salud del Inventario',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      // Selector dinámico de días de cobertura
+                      DropdownButton<int>(
+                        isDense: true,
+                        value: _diasCobertura,
+                        items: const [
+                          DropdownMenuItem(value: 7, child: Text('1 Semana')),
+                          DropdownMenuItem(value: 15, child: Text('15 Días')),
+                          DropdownMenuItem(value: 30, child: Text('1 Mes')),
+                          DropdownMenuItem(value: 60, child: Text('2 Meses')),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() {
+                              _diasCobertura = value;
+                            });
+                          }
+                        },
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 12),
+
+                  // Aquí dibujamos la barra gráfica (cambia automáticamente si eliges otra fecha)
+                  StockHealthBar(
+                    product: product,
+                    diasCobertura: _diasCobertura,
+                  ),
+
+                  // ==========================================
                 ],
               ),
             ),
@@ -361,10 +394,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 children: [
                   const Text(
                     'Histórico de ventas del mes',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   Text('Cantidad vendida: $_totalVendido'),
                   const SizedBox(height: 16),
@@ -391,10 +421,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 children: [
                   const Text(
                     'Vista previa de cenefa',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
                   PriceLabelPreview(

@@ -72,25 +72,28 @@ class SaldosApiService {
     ).whereType<Map<String, dynamic>>().map(ProductBalance.fromJson).toList();
   }
 
+  // 1. Obtener clases ahora usa la ruta rápida de PostgreSQL
   Future<List<String>> getClasses() async {
-    final response = await _apiClient.get('${ApiConfig.saldosBasePath}/clases');
-    return _extractData(response)
-        .whereType<Map<String, dynamic>>()
-        .map((item) => item['Clase']?.toString() ?? '')
-        .where((item) => item.isNotEmpty)
-        .toList();
+    try {
+      final response = await _apiClient.get('/api/proveedores/clases');
+      if (response is List) return response.map((e) => e.toString()).toList();
+      return [];
+    } catch (e) {
+      print("❌ ERROR AL CARGAR CLASES EN FLUTTER: $e");
+      return [];
+    }
   }
 
+  // 2. Obtener proveedores ahora usa la ruta rápida de PostgreSQL
   Future<List<String>> getProviders() async {
-    final response = await _apiClient.get(
-      '${ApiConfig.saldosBasePath}/proveedores',
-    );
-
-    return _extractData(response)
-        .whereType<Map<String, dynamic>>()
-        .map((item) => item['proveedor']?.toString() ?? '')
-        .where((item) => item.isNotEmpty)
-        .toList();
+    try {
+      final response = await _apiClient.get('/api/proveedores/');
+      if (response is List) return response.map((e) => e.toString()).toList();
+      return [];
+    } catch (e) {
+      print("❌ ERROR AL CARGAR PROVEEDORES EN FLUTTER: $e");
+      return [];
+    }
   }
 
   Future<List<ProductBalance>> getProductsByClass(
@@ -163,7 +166,6 @@ class SaldosApiService {
         queryParameters: {'q': termino},
       );
 
-      // Maneja si la respuesta viene directa o dentro de un "data"
       if (response is List) return response;
       if (response is Map && response['data'] is List) return response['data'];
       return [];
@@ -200,23 +202,37 @@ class SaldosApiService {
     }
   }
 
-  // La nueva búsqueda ultrarrápida
-  Future<List<dynamic>> buscarRapido(String query, {String? proveedor}) async {
+  // --- CORREGIDO: La nueva búsqueda ultrarrápida ahora acepta 'clase' ---
+  Future<List<dynamic>> buscarRapido(
+    String query, {
+    String? proveedor,
+    String? clase,
+  }) async {
     try {
       final params = {'q': query};
+
       if (proveedor != null && proveedor.isNotEmpty) {
         params['proveedor'] = proveedor;
       }
+
+      if (clase != null && clase.isNotEmpty) {
+        params['clase'] = clase;
+      }
+
       final response = await _apiClient.get(
         '/api/proveedores/buscar-rapido',
         queryParameters: params,
       );
 
       if (response is List) return response;
-      if (response is Map && response.containsKey('data'))
+      if (response is Map && response.containsKey('data')) {
         return response['data'];
+      }
       return [];
-    } catch (e) {
+    } catch (e, stacktrace) {
+      // 🚨 AQUÍ ESTABA LA TRAMPA: Flutter ocultaba el error. Ahora lo veremos.
+      print("❌ ERROR FATAL EN BUSCAR RAPIDO (FLUTTER): $e");
+      print(stacktrace);
       return [];
     }
   }
