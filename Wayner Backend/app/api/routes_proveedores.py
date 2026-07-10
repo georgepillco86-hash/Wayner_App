@@ -39,15 +39,20 @@ async def buscar_en_kardex(q: str):
 def buscar_rapido(
     q: str = "", 
     proveedor: Optional[str] = None,
-    clase: Optional[str] = None  # ---> NUEVO: Recibimos la clase
+    clase: Optional[str] = None
 ):
     """Busca instantáneamente en las tablas espejo y cruza con datos vivos"""
     
-    # 🚨 CAMBIO AQUÍ: Bloqueamos la búsqueda solo si NO hay texto, NO hay proveedor y NO hay clase
+    # 📍 RASTREADOR DE ENTRADA AL SERVIDOR
+    print(f"📥 [ROUTER] Petición recibida en puerto 8000 -> q='{q}', proveedor='{proveedor}', clase='{clase}'")
+    
+    # Bloqueamos la búsqueda solo si NO hay texto, NO hay proveedor y NO hay clase
     if len(q) < 2 and not proveedor and not clase:
+        print("🛑 [ROUTER] Bloqueado por seguridad: Búsqueda demasiado corta o vacía.")
         return []
         
-    # Pasamos los 3 parámetros (nombrados para evitar confusiones de posición)
+    print("✅ [ROUTER] Permiso concedido. Lanzando motor predictivo...")
+    
     return proveedor_repo.buscar_rapido_proveedores(
         termino=q, 
         proveedor_especifico=proveedor, 
