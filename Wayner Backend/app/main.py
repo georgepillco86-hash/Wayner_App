@@ -43,7 +43,7 @@ app.add_middleware(AuditLogMiddleware)
 
 @app.on_event("startup")
 async def startup_event():
-    await ProviderMirrorService.sincronizar_espejo()
+    #await ProviderMirrorService.sincronizar_espejo()
     # 1. Inicia el bucle de sincronización de proveedores (Espejo)
     asyncio.create_task(ProviderMirrorService.iniciar_bucle_sincronizacion())
     

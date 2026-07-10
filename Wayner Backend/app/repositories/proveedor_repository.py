@@ -70,9 +70,13 @@ class ProveedorRepository:
 
     # ---> BÚSQUEDA RÁPIDA HÍBRIDA POR PYTHON <---
     # ---> BÚSQUEDA RÁPIDA HÍBRIDA POR PYTHON (TIEMPO REAL) <---
+# ---> BÚSQUEDA RÁPIDA HÍBRIDA POR PYTHON (CON LOGS DE DIAGNÓSTICO) <---
+# ---> BÚSQUEDA RÁPIDA HÍBRIDA POR PYTHON (CON RASTREADORES) <---
     def buscar_rapido_proveedores(self, termino: str, proveedor_especifico: str = None, clase_especifica: str = None) -> list:
+        # 📍 RASTREADOR 1: Verificamos si Flutter logró conectarse
+        print(f"📞 [PASO 1] Petición recibida -> Buscando: '{termino}', Prov: '{proveedor_especifico}', Clase: '{clase_especifica}'")
+        
         try:
-            # 0. NUEVO: Extraer los tiempos de entrega (Lead Time) dinámicos del Calendario
             query_tiempos = """
             SELECT proveedor, 
                    MAX(fecha_entrega - fecha_programada) as lead_time_calculado 
@@ -81,10 +85,8 @@ class ProveedorRepository:
             GROUP BY proveedor
             """
             tiempos_bd = pedidos_db.fetch_all(query_tiempos)
-            # Creamos un diccionario rápido para buscar el tiempo de cada proveedor
             tiempos_map = {row["proveedor"]: int(row["lead_time_calculado"]) for row in tiempos_bd} if tiempos_bd else {}
 
-            # 1. Buscamos en PostgreSQL (Lista de productos activos)
             query_pg = """
             SELECT codigo, codigo_barra, nombre_producto, proveedor, clase 
             FROM p_proveedores.catalogo_proveedores
@@ -112,25 +114,30 @@ class ProveedorRepository:
             else:
                 query_pg += " LIMIT 50"
             
+            # Ejecutamos la búsqueda en Postgres
             resultados_pg = pedidos_db.fetch_all(query_pg, tuple(params_pg))
+            
+            # 📍 RASTREADOR 2: Verificamos cuántos productos encontró Postgres
+            print(f"🔎 [PASO 2] PostgreSQL encontró {len(resultados_pg if resultados_pg else [])} productos en el catálogo espejo.")
+            
             if not resultados_pg:
+                print("⚠️ [ALERTA] Como Postgres devolvió 0 productos, el sistema cancela la matemática y no va a MySQL.")
                 return []
                 
             codigos = [str(row["codigo"]).strip() for row in resultados_pg if row.get("codigo")]
             if not codigos:
                 return []
 
-            # 2. Buscamos en MySQL en LOTES (Cálculo Vivo de Precios y VDP)
             datos_vivos = {}
             lote_size = 100
             
-            print(f"🚀 [MYSQL] Calculando VDP y Precios para {len(codigos)} productos en lotes de {lote_size}...")
+            # 📍 RASTREADOR 3: Entrando a la matemática de MySQL
+            print(f"🚀 [PASO 3] Consultando VDP en MySQL para {len(codigos)} productos...")
             
             for i in range(0, len(codigos), lote_size):
                 lote = codigos[i:i + lote_size]
                 format_strings = ','.join(['%s'] * len(lote))
                 
-                # ---> QUERY OPTIMIZADO: Agregamos el cálculo VDP de 1 Año en Tiempo Real <---
                 query_mysql = f"""
                 SELECT 
                     TRIM(k.Codigo) AS Codigo,
@@ -142,7 +149,8 @@ class ProveedorRepository:
                     COALESCE(MAX(k.IVA), 0) AS IVA,
                     COALESCE(MAX(k.Costo), 0) AS Costo,
                     
-                    /* CÁLCULO VDP: Promedio diario de ventas estrictamente del último año (365 días) */
+                    MAX(k.Fecha) AS Ejemplo_Fecha,
+                    COALESCE(SUM(CASE WHEN DATE(k.Fecha) >= DATE_SUB(CURDATE(), INTERVAL 365 DAY) THEN COALESCE(k.Egreso, 0) ELSE 0 END), 0) AS Suma_Egresos,
                     COALESCE(SUM(CASE WHEN DATE(k.Fecha) >= DATE_SUB(CURDATE(), INTERVAL 365 DAY) THEN COALESCE(k.Egreso, 0) ELSE 0 END) / 365.0, 0) AS VDP_Calculado
                     
                 FROM v_kardexproductos k
@@ -152,13 +160,13 @@ class ProveedorRepository:
                 """
                 
                 res_mysql_lote = db.fetch_all(query_mysql, tuple(lote))
-                for r in res_mysql_lote:
+                for idx, r in enumerate(res_mysql_lote):
                     clean_code = str(r["Codigo"]).strip() if r.get("Codigo") else ""
                     datos_vivos[clean_code] = r
                     
-                print(f"   ⏳ Lote procesado: {i + len(lote)} / {len(codigos)}")
-
-            # 3. Combinamos la información y la empaquetamos para Flutter
+                    if i == 0 and idx < 3:
+                        print(f"🛑 [DEBUG VDP] Producto: {clean_code} | Fecha Cruda: {r.get('Ejemplo_Fecha')} | Egresos: {r.get('Suma_Egresos')} | VDP: {r.get('VDP_Calculado')}")
+                    
             respuesta_final = []
             
             def safe_float(val):
@@ -170,8 +178,6 @@ class ProveedorRepository:
                 cod = str(pg_row["codigo"]).strip()
                 vivo = datos_vivos.get(cod, {})
                 proveedor_actual = pg_row.get("proveedor")
-                
-                # Asignamos el lead time dinámico (Si el proveedor no tiene visita, por defecto asume 3 días)
                 tiempo_entrega = tiempos_map.get(proveedor_actual, 3)
                 
                 respuesta_final.append({
@@ -184,13 +190,11 @@ class ProveedorRepository:
                     "Precio": safe_float(vivo.get("Precio", 0)),
                     "IVA": safe_float(vivo.get("IVA", 0)),
                     "Costo": safe_float(vivo.get("Costo", 0)),
-                    
-                    # Inyectamos los datos matemáticos
                     "vdp": safe_float(vivo.get("VDP_Calculado", 0)),
                     "lead_time_dias": tiempo_entrega
                 })
                 
-            print(f"✅ [ÉXITO] {len(respuesta_final)} productos devueltos a Flutter.")
+            print(f"✅ [PASO 4] Proceso finalizado. Enviando {len(respuesta_final)} productos a Flutter.")
             return respuesta_final
 
         except Exception as e:
