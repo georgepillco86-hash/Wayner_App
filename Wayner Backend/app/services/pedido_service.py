@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import Any
 
@@ -821,8 +822,15 @@ class PedidoService:
             "pedido": pedido_actualizado,
             "resumen_recepcion": resumen,
         }
-    
-    def get_cantidad_recomendada_producto(self, codigo: str) -> dict:
+
+    def get_cantidad_recomendada_producto(
+        self,
+        codigo: str,
+        dias_historial: int = 30,
+        lead_time: int = 7,
+        factor_estacionalidad: float = 1.0,
+        dias_seguridad: int = 3
+    ) -> dict:
         codigo = self._validate_text(codigo, "El código")
 
         product = self.repository.get_product_for_order(codigo)
@@ -830,10 +838,39 @@ class PedidoService:
         if not product:
             raise NotFoundError("Producto no encontrado para pedido")
 
-        recomendacion = self.repository.get_cantidad_recomendada_producto(codigo)
+        # 1. Obtener egresos históricos
+        # Reemplazar la lectura estática anterior ('get_cantidad_recomendada_producto')
+        # por una consulta de la suma de ventas en los últimos 'N' días.
+        # NOTA: Debes asegurarte de implementar o ajustar este método en el PedidoRepository
+        # para que retorne únicamente la suma total vendida en ese periodo (int o float).
+        ventas_totales_periodo = self.repository.get_ventas_historicas_totales(
+            codigo=codigo, 
+            dias=dias_historial
+        )
+
+        # 2. Calcular PVD (Promedio de Ventas Diarias)
+        pvd = ventas_totales_periodo / dias_historial if dias_historial > 0 else 0
+
+        # 3. Calcular VDP Dinámico (Punto de Reorden)
+        vdp_dinamico_float = ((pvd * factor_estacionalidad) * lead_time) + (pvd * dias_seguridad)
+        vdp_dinamico = math.ceil(vdp_dinamico_float)
+
+        # 4. Determinar la cantidad sugerida a pedir
+        stock_actual = self._normalizar_cantidad(product.get("stock_actual") or 0)
+
+        cantidad_a_pedir = 0
+        if stock_actual <= vdp_dinamico:
+            cantidad_a_pedir = vdp_dinamico - stock_actual
 
         return {
-            **recomendacion,
-            "stock_actual": product.get("stock_actual"),
             "nombre": product.get("nombre"),
+            "stock_actual": stock_actual,
+            "stock_minimo_calculado": vdp_dinamico,
+            "cantidad_recomendada": cantidad_a_pedir,
+            "parametros_calculo": {
+                "pvd": round(pvd, 2),
+                "factor_estacionalidad": factor_estacionalidad,
+                "lead_time": lead_time,
+                "dias_seguridad": dias_seguridad
+            }
         }

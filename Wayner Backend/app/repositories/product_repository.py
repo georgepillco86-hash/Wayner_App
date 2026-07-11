@@ -186,3 +186,45 @@ class ProductRepository:
         ORDER BY Fecha ASC, Documento ASC, Factura ASC
         """
         return db.fetch_all(query, (barcode, desde, hasta))
+
+    def get_ventas_en_bloque(
+        self,
+        codigos: list[str],
+        desde: str,
+        hasta: str
+    ) -> dict[str, float]:
+        """
+        Devuelve la suma total de egresos (ventas) agrupados por código de barras.
+        Permite hacer un cálculo masivo en una sola petición a la base de datos.
+        """
+        if not codigos:
+            return {}
+
+        # Ajustamos el formato de la lista para la consulta IN en SQL
+        formato = ','.join(['%s'] * len(codigos))
+        
+        query = f"""
+        SELECT 
+            CodigoBarra,
+            CAST(SUM(IFNULL(Egreso, 0)) AS DECIMAL(18,3)) AS total_egreso
+        FROM v_kardexproductos
+        WHERE CodigoBarra IN ({formato})
+        AND Fecha BETWEEN %s AND %s
+        GROUP BY CodigoBarra
+        """
+        
+        # Juntamos los códigos y las fechas en una sola tupla para el conector SQL
+        parametros = tuple(codigos) + (desde, hasta)
+        resultados = db.fetch_all(query, parametros)
+
+        # Convertimos la respuesta [{"CodigoBarra": "123", "total_egreso": 15}] 
+        # a un diccionario rápido {"123": 15.0} para el servicio en Python
+        ventas_agrupadas = {}
+        if resultados:
+            for fila in resultados:
+                codigo = fila.get("CodigoBarra")
+                total = fila.get("total_egreso")
+                if codigo:
+                    ventas_agrupadas[codigo] = float(total) if total else 0.0
+
+        return ventas_agrupadas
