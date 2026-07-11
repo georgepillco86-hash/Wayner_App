@@ -1,10 +1,12 @@
 from __future__ import annotations
-
+import logging
 from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
 from app.core.database import db
+
+logger = logging.getLogger(__name__)
 
 
 class ProductRepository:
@@ -198,8 +200,10 @@ class ProductRepository:
         Permite hacer un cálculo masivo en una sola petición a la base de datos.
         """
         if not codigos:
+            logger.warning("[REPO] get_ventas_en_bloque fue llamado con una lista vacía de códigos.")
             return {}
 
+        logger.info(f"[REPO] Ejecutando Bulk Query para {len(codigos)} códigos. Desde: {desde} Hasta: {hasta}")
         # Ajustamos el formato de la lista para la consulta IN en SQL
         formato = ','.join(['%s'] * len(codigos))
         
@@ -215,7 +219,12 @@ class ProductRepository:
         
         # Juntamos los códigos y las fechas en una sola tupla para el conector SQL
         parametros = tuple(codigos) + (desde, hasta)
-        resultados = db.fetch_all(query, parametros)
+        try:
+            resultados = db.fetch_all(query, parametros)
+            logger.info(f"[REPO] La BD devolvió {len(resultados) if resultados else 0} registros coincidentes.")
+        except Exception as e:
+            logger.error(f"[REPO] Error ejecutando la consulta en bloque: {str(e)}")
+            return {}
 
         # Convertimos la respuesta [{"CodigoBarra": "123", "total_egreso": 15}] 
         # a un diccionario rápido {"123": 15.0} para el servicio en Python
@@ -227,4 +236,5 @@ class ProductRepository:
                 if codigo:
                     ventas_agrupadas[codigo] = float(total) if total else 0.0
 
+        logger.info(f"[REPO] Diccionario de ventas procesado: {ventas_agrupadas}")
         return ventas_agrupadas

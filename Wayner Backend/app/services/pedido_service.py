@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import math
+from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import Any
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.repositories.pedido_repository import PedidoRepository
+# Importamos el ProductRepository para usar la consulta masiva del Kardex
+from app.repositories.product_repository import ProductRepository
 from app.schemas.pedido import (
     PedidoCreate,
     PedidoEstadoUpdate,
@@ -18,10 +22,15 @@ from app.schemas.pedido import (
     PedidoItemRecepcionUpdate,
 )
 
+# Inicializamos el logger
+logger = logging.getLogger(__name__)
+
 
 class PedidoService:
     def __init__(self, repository: PedidoRepository) -> None:
         self.repository = repository
+        # Instanciamos el repo de productos para el cálculo de VDP
+        self.product_repository = ProductRepository()
 
     @staticmethod
     def _validate_text(value: str, field_name: str) -> str:
@@ -36,6 +45,67 @@ class PedidoService:
             return int(float(cantidad))
         except Exception:
             return cantidad
+
+    def _inyectar_vdp_dinamico(self, data: list[dict[str, Any]] | dict[str, Any] | None) -> list[dict[str, Any]] | dict[str, Any] | None:
+        """
+        Calcula el stock mínimo (VDP) dinámicamente para el listado de Pedidos.
+        """
+        if not data:
+            return data
+
+        is_dict = isinstance(data, dict)
+        items = [data] if is_dict else data
+
+        logger.info(f"[PEDIDO_SERVICE] Interceptando {len(items)} productos para inyectar VDP...")
+
+        codigos_a_consultar = []
+        for item in items:
+            codigo = item.get("codigo") or item.get("codigo_barra") or item.get("Codigo")
+            if codigo and codigo not in codigos_a_consultar:
+                codigos_a_consultar.append(codigo)
+
+        hasta_date = datetime.now()
+        desde_date = hasta_date - timedelta(days=30)
+        desde_str = desde_date.strftime("%Y-%m-%d")
+        hasta_str = hasta_date.strftime("%Y-%m-%d")
+
+        ventas_bulk = {}
+        if codigos_a_consultar:
+            try:
+                ventas_bulk = self.product_repository.get_ventas_en_bloque(
+                    codigos=codigos_a_consultar,
+                    desde=desde_str,
+                    hasta=hasta_str
+                )
+            except Exception as e:
+                logger.error(f"[PEDIDO_SERVICE] Error consultando bulk VDP: {e}")
+                ventas_bulk = {}
+
+        primer_log = False
+        for item in items:
+            codigo = item.get("codigo") or item.get("codigo_barra") or item.get("Codigo")
+            ventas_totales = ventas_bulk.get(codigo, 0.0)
+
+            dias_historial = 30
+            pvd = ventas_totales / dias_historial if dias_historial > 0 else 0
+            
+            # Buscamos el lead time si viene de la DB, si no usamos 7 por defecto
+            lead_time = int(item.get("lead_time_dias") or item.get("LeadTime") or 7)
+
+            # Inyectamos en el JSON las variables que Flutter busca
+            item["vdp"] = round(pvd, 4)
+            item["lead_time_dias"] = lead_time
+
+            stock_minimo_calc = math.ceil((pvd * 1.0 * lead_time) + (pvd * 3))
+            item["stock_minimo"] = stock_minimo_calc
+            if "min" in item: item["min"] = stock_minimo_calc
+            if "Min" in item: item["Min"] = stock_minimo_calc
+
+            if not primer_log:
+                logger.info(f"[PEDIDO_SERVICE] OK! Ej: Codigo {codigo} | vdp={item['vdp']} | min={item['Min']}")
+                primer_log = True
+
+        return items[0] if is_dict else items
 
     def search_products(
         self,
@@ -58,23 +128,28 @@ class PedidoService:
         if proveedor:
             proveedor = proveedor.strip()
 
-        return self.repository.search_products_for_order(
+        # Obtenemos los productos crudos
+        resultados = self.repository.search_products_for_order(
             text=text,
             text2=text2,
             proveedor=proveedor,
             limit=limit,
         )
+        
+        # INYECTAMOS EL CÁLCULO AQUÍ ANTES DE ENVIAR A FLUTTER
+        return self._inyectar_vdp_dinamico(resultados)
 
     def get_product(self, codigo: str) -> dict[str, Any]:
         codigo = self._validate_text(codigo, "El código")
         product = self.repository.get_product_for_order(codigo)
         if not product:
             raise NotFoundError("Producto no encontrado para pedido")
-        return product
+            
+        # INYECTAMOS TAMBIÉN EN EL PRODUCTO INDIVIDUAL
+        return self._inyectar_vdp_dinamico(product)
 
     def create_order(self, payload: PedidoCreate) -> dict[str, Any]:
         pedido_id = self.repository.create_order(payload.usuario, payload.observacion)
-
         for input_item in payload.items:
             product = self.get_product(input_item.codigo)
             self.repository.add_order_item(
@@ -85,7 +160,6 @@ class PedidoService:
                 nota_compra=input_item.nota_compra,
                 tipo_destino=input_item.tipo_destino,
             )
-
         return self.get_order(pedido_id)
 
     def list_orders(self, limit: int = 50) -> list[dict[str, Any]]:

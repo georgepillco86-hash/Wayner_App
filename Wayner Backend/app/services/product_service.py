@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import time
 from datetime import datetime, timedelta
@@ -9,6 +10,9 @@ from app.core.config import settings
 from app.core.exceptions import NotFoundError, ValidationError
 from app.repositories.product_repository import ProductRepository
 from app.repositories.promocion_repository import PromocionRepository
+
+# Inicializar logger
+logger = logging.getLogger(__name__)
 
 
 class TTLCache:
@@ -55,20 +59,26 @@ class ProductService:
     def _inyectar_vdp_dinamico(self, data: list[dict[str, Any]] | dict[str, Any] | None) -> list[dict[str, Any]] | dict[str, Any] | None:
         """
         Calcula el stock mínimo (VDP) dinámicamente mediante Bulk Query
-        para evitar sobrecargar la base de datos espejo.
+        para evitar sobrecargar la base de datos espejo e inyecta
+        las variables para los modelos dinámicos en Flutter.
         """
         if not data:
+            logger.warning("[PRODUCT_SERVICE] _inyectar_vdp_dinamico recibió data vacía.")
             return data
 
         is_dict = isinstance(data, dict)
         items = [data] if is_dict else data
 
-        # 1. Extraer los códigos de la página/lista actual (Ej: los 30 productos que devolvió la búsqueda)
+        logger.info(f"[PRODUCT_SERVICE] Iniciando inyección para {len(items)} productos.")
+
+        # 1. Extraer los códigos de la página/lista actual
         codigos_a_consultar = []
         for item in items:
             codigo = item.get("codigo") or item.get("codigo_barra") or item.get("Codigo")
             if codigo and codigo not in codigos_a_consultar:
                 codigos_a_consultar.append(codigo)
+
+        logger.info(f"[PRODUCT_SERVICE] Se extrajeron {len(codigos_a_consultar)} códigos únicos para consultar.")
 
         # 2. Definir fechas (últimos 30 días)
         hasta_date = datetime.now()
@@ -76,19 +86,21 @@ class ProductService:
         desde_str = desde_date.strftime("%Y-%m-%d")
         hasta_str = hasta_date.strftime("%Y-%m-%d")
 
-        # 3. Hacer UNA SOLA consulta a la base de datos para obtener los egresos de todos esos códigos
+        # 3. Hacer UNA SOLA consulta a la base de datos
         ventas_bulk = {}
         if codigos_a_consultar:
             try:
-                # Este método devolverá un diccionario: {"1001": 25.0, "1002": 10.0}
+                logger.info("[PRODUCT_SERVICE] Llamando a get_ventas_en_bloque...")
                 ventas_bulk = self.repository.get_ventas_en_bloque(
                     codigos=codigos_a_consultar,
                     desde=desde_str,
                     hasta=hasta_str
                 )
             except Exception as e:
-                # Log del error en caso de fallo en la conexión
+                logger.error(f"[PRODUCT_SERVICE] Falló la llamada a bulk query: {str(e)}")
                 ventas_bulk = {}
+
+        primer_item_logueado = False
 
         # 4. Inyectar el cálculo iterando rápidamente en memoria
         for item in items:
@@ -101,19 +113,31 @@ class ProductService:
             dias_historial = 30
             pvd = ventas_totales / dias_historial if dias_historial > 0 else 0
             factor_estacionalidad = 1.0
-            lead_time = 7       # Días de entrega del proveedor
+            
+            # Priorizamos el lead_time desde la base de datos si existe, si no, defecto 7
+            lead_time = int(item.get("lead_time_dias") or item.get("LeadTime") or 7)
             dias_seguridad = 3  # Colchón de seguridad
 
-            # Fórmula VDP
+            # ==========================================
+            # INYECCIÓN PARA FLUTTER
+            # ==========================================
+            item["vdp"] = round(pvd, 4)
+            item["lead_time_dias"] = lead_time
+
+            # Fórmula VDP (Compatibilidad extra)
             vdp_dinamico_float = ((pvd * factor_estacionalidad) * lead_time) + (pvd * dias_seguridad)
             vdp_calculado = math.ceil(vdp_dinamico_float)
 
-            # Inyectar el cálculo final para la vista en Flutter
             item["stock_minimo"] = vdp_calculado
             if "min" in item: item["min"] = vdp_calculado
             if "Min" in item: item["Min"] = vdp_calculado
             if "stock_estimado_minimo" in item: item["stock_estimado_minimo"] = vdp_calculado
 
+            if not primer_item_logueado:
+                logger.info(f"[PRODUCT_SERVICE] EJEMPLO INYECCIÓN -> Codigo: {codigo} | Ventas Hist.: {ventas_totales} | vdp Inyectado: {item['vdp']} | lead_time Inyectado: {item['lead_time_dias']}")
+                primer_item_logueado = True
+
+        logger.info("[PRODUCT_SERVICE] Inyección completada con éxito.")
         return items[0] if is_dict else items
 
     def health(self) -> dict[str, Any]:
