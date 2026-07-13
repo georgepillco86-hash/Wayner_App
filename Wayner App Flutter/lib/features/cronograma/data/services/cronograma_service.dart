@@ -1,12 +1,12 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../../../core/storage/session_storage.dart';
+import '../../../../core/config/api_config.dart';
 import '../models/visita_model.dart';
 import '../models/notificacion_model.dart';
 
 class CronogramaService {
-  final String baseUrl =
-      'http://localhost:8000/api/cronograma'; // Ajusta la IP si pruebas en móvil físico
+  final String baseUrl = '${ApiConfig.baseUrl}/api/cronograma';
 
   Future<Map<String, String>> _getHeaders() async {
     final user = await SessionStorage.getUser();
@@ -17,11 +17,12 @@ class CronogramaService {
   }
 
   // 1. Crear una nueva programación
+  // 1. Crear una nueva programación
   Future<bool> crearProgramacion({
     required String proveedor,
-    required int frecuencia,
-    required DateTime fechaInicio,
-    required DateTime fechaEntrega, // ---> NUEVO PARÁMETRO
+    required String frecuencia, // Ahora es un texto
+    required List<Map<String, DateTime>> paresVisitaEntrega, // Lista de pares
+    required int repetirMeses, // La duración del cronograma
     required List<String> usuariosVinculados,
   }) async {
     final response = await http.post(
@@ -30,11 +31,17 @@ class CronogramaService {
       body: jsonEncode({
         'proveedor': proveedor,
         'frecuencia': frecuencia,
-        'fecha_inicio': fechaInicio
-            .toIso8601String(), // Formato seguro para el backend
-        'fecha_entrega': fechaEntrega
-            .toIso8601String(), // ---> NUEVA PROPIEDAD AL PAYLOAD
+        'repetir_meses': repetirMeses,
         'usuarios_vinculados': usuariosVinculados,
+        // Convertimos los pares de Flutter a un formato JSON seguro
+        'pares': paresVisitaEntrega
+            .map(
+              (par) => {
+                'visita': par['visita']!.toIso8601String(),
+                'entrega': par['entrega']!.toIso8601String(),
+              },
+            )
+            .toList(),
       }),
     );
 

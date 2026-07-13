@@ -45,8 +45,13 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
   @override
   void initState() {
     super.initState();
-    _cargarRol(); // <--- ¡FALTABA ESTO! Sin esto, nadie es Admin ni Bodeguero.
-    context.read<ProductSearchController>().loadInitialData();
+    _cargarRol();
+
+    // Esperamos a que la pantalla termine de construirse por primera vez
+    // antes de pedir los datos y disparar animaciones de carga.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<ProductSearchController>().loadInitialData();
+    });
   }
 
   @override

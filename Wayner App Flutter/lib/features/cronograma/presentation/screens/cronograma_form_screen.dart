@@ -6,7 +6,14 @@ import '../../../usuarios/models/usuario.dart';
 
 class CronogramaFormScreen extends StatefulWidget {
   final VoidCallback onSaved;
-  const CronogramaFormScreen({super.key, required this.onSaved});
+  final String?
+  proveedorInicial; // <-- NUEVO: Para recibir el redireccionamiento directo
+
+  const CronogramaFormScreen({
+    super.key,
+    required this.onSaved,
+    this.proveedorInicial,
+  });
 
   @override
   State<CronogramaFormScreen> createState() => _CronogramaFormScreenState();
@@ -17,13 +24,23 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
   final _usuariosService = UsuariosService();
 
   final _proveedorController = TextEditingController();
+  String? _proveedorSeleccionado;
 
-  // ---> MODIFICADO: Variables para manejar ambas fechas <---
-  DateTime? _fechaSeleccionada; // Fecha de Visita
-  TimeOfDay? _horaSeleccionada; // Hora de Visita
-  DateTime? _fechaEntregaSeleccionada; // Fecha de Entrega de mercadería
+  // ---> MODIFICADO: Frecuencia ahora es tipo String para empalmar con el Backend
+  String _frecuenciaSeleccionada = 'Semanal';
+  final List<String> _opcionesFrecuencia = ['Semanal', 'Quincenal', 'Mensual'];
 
-  int _frecuenciaSeleccionada = 1;
+  // ---> NUEVO: Duración de la secuencia (Repetir secuencia)
+  int _repetirMeses = 1;
+  final Map<int, String> _opcionesDuracion = {
+    1: '1 Mes',
+    6: 'Medio Año (6 meses)',
+    12: '1 Año',
+    60: 'Para Siempre (Proyectar 5 años)',
+  };
+
+  // ---> NUEVO: Lista dinámica de Pares Relacionales (Visita conectada a su Entrega)
+  List<Map<String, DateTime>> _paresVisitaEntrega = [];
 
   List<Usuario> _usuariosDb = [];
   List<String> _proveedoresDb = [];
@@ -34,7 +51,60 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
   @override
   void initState() {
     super.initState();
+    _inicializarParVacio();
     _cargarDatosIniciales();
+  }
+
+  @override
+  void dispose() {
+    _proveedorController.dispose();
+    super.dispose();
+  }
+
+  void _inicializarParVacio() {
+    final ahora = DateTime.now();
+    _paresVisitaEntrega.add({
+      'visita': DateTime(
+        ahora.year,
+        ahora.month,
+        ahora.day,
+        9,
+        0,
+      ), // 09:00 AM por defecto
+      'entrega': DateTime(
+        ahora.year,
+        ahora.month,
+        ahora.day + 2,
+        12,
+        0,
+      ), // 2 días después
+    });
+  }
+
+  void _agregarOtroPar() {
+    setState(() {
+      final ahora = DateTime.now();
+      _paresVisitaEntrega.add({
+        'visita': DateTime(ahora.year, ahora.month, ahora.day, 9, 0),
+        'entrega': DateTime(ahora.year, ahora.month, ahora.day + 2, 12, 0),
+      });
+    });
+  }
+
+  void _eliminarPar(int index) {
+    if (_paresVisitaEntrega.length > 1) {
+      setState(() {
+        _paresVisitaEntrega.removeAt(index);
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Debe configurar al menos una secuencia de visita y entrega.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _cargarDatosIniciales() async {
@@ -46,6 +116,14 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
         setState(() {
           _usuariosDb = usuarios;
           _proveedoresDb = proveedores;
+
+          // Si nos enviaron un proveedor desde el inventario, lo pre-seleccionamos
+          if (widget.proveedorInicial != null &&
+              widget.proveedorInicial!.isNotEmpty) {
+            _proveedorSeleccionado = widget.proveedorInicial;
+            _proveedorController.text = widget.proveedorInicial!;
+          }
+
           _isLoading = false;
         });
       }
@@ -59,71 +137,57 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
     }
   }
 
-  // 1. Selector de Fecha de VISITA
-  Future<void> _seleccionarFechaHora() async {
+  // Selector unificado de fecha y hora para la lista de pares
+  Future<void> _seleccionarFechaHoraPar(int index, String tipoKey) async {
+    final DateTime fechaBase = _paresVisitaEntrega[index][tipoKey]!;
+
     final fecha = await showDatePicker(
       context: context,
-      initialDate: _fechaSeleccionada ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime(2030),
+      initialDate: fechaBase,
+      firstDate: DateTime.now().subtract(
+        const Duration(days: 365),
+      ), // Permitir margen histórico si se edita
+      lastDate: DateTime(2035),
     );
     if (fecha == null) return;
 
     if (!mounted) return;
     final hora = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay.now(),
+      initialTime: TimeOfDay.fromDateTime(fechaBase),
     );
     if (hora == null) return;
 
     setState(() {
-      _fechaSeleccionada = fecha;
-      _horaSeleccionada = hora;
+      _paresVisitaEntrega[index][tipoKey] = DateTime(
+        fecha.year,
+        fecha.month,
+        fecha.day,
+        hora.hour,
+        hora.minute,
+      );
 
-      // Si ya había una fecha de entrega y resulta que ahora es ANTES de la nueva visita, la borramos
-      if (_fechaEntregaSeleccionada != null &&
-          _fechaEntregaSeleccionada!.isBefore(_fechaSeleccionada!)) {
-        _fechaEntregaSeleccionada = null;
+      // Validación relacional automática: Si la entrega queda antes que la visita, la movemos hacia adelante
+      if (tipoKey == 'visita') {
+        final entregaActual = _paresVisitaEntrega[index]['entrega']!;
+        if (entregaActual.isBefore(_paresVisitaEntrega[index]['visita']!)) {
+          _paresVisitaEntrega[index]['entrega'] =
+              _paresVisitaEntrega[index]['visita']!.add(
+                const Duration(days: 1),
+              );
+        }
       }
     });
   }
 
-  // 2. ---> NUEVO: Selector de Fecha de ENTREGA <---
-  Future<void> _seleccionarFechaEntrega() async {
-    if (_fechaSeleccionada == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Primero selecciona la fecha de visita del proveedor'),
-        ),
-      );
-      return;
-    }
-
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _fechaEntregaSeleccionada ?? _fechaSeleccionada!,
-      // Bloqueamos el calendario para que no puedan elegir un día antes de la visita
-      firstDate: _fechaSeleccionada!,
-      lastDate: DateTime(2030),
-    );
-    if (picked != null) {
-      setState(() {
-        _fechaEntregaSeleccionada = picked;
-      });
-    }
-  }
-
   Future<void> _guardar() async {
-    // Validamos que todos los campos estén llenos, incluyendo la entrega
-    if (_proveedorController.text.isEmpty ||
-        _fechaSeleccionada == null ||
-        _horaSeleccionada == null ||
-        _fechaEntregaSeleccionada == null || // <-- Validación añadida
-        _usuariosVinculados.isEmpty) {
+    final nombreProveedor = _proveedorController.text.trim();
+
+    if (nombreProveedor.isEmpty || _usuariosVinculados.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Por favor complete todos los campos (Visita y Entrega) y asigne al menos un usuario.',
+            'Por favor asigne un Proveedor y al menos un Usuario responsable.',
           ),
         ),
       );
@@ -132,46 +196,46 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
 
     setState(() => _isLoading = true);
 
-    final fechaCompleta = DateTime(
-      _fechaSeleccionada!.year,
-      _fechaSeleccionada!.month,
-      _fechaSeleccionada!.day,
-      _horaSeleccionada!.hour,
-      _horaSeleccionada!.minute,
-    );
-
-    // Formateamos la fecha de entrega con una hora por defecto (ej: 12:00 PM)
-    final fechaEntregaCompleta = DateTime(
-      _fechaEntregaSeleccionada!.year,
-      _fechaEntregaSeleccionada!.month,
-      _fechaEntregaSeleccionada!.day,
-      12,
-      0,
-    );
-
     try {
+      // El repositorio procesará la lista de pares relacionales y aplicará
+      // la sobreescritura automática limpia sobre ferrotienda.cronograma_visitas
       await _cronogramaService.crearProgramacion(
-        proveedor: _proveedorController.text,
+        proveedor: nombreProveedor,
         frecuencia: _frecuenciaSeleccionada,
-        fechaInicio: fechaCompleta,
-        // ---> NUEVO: Pasamos la fecha de entrega al servicio <---
-        fechaEntrega: fechaEntregaCompleta,
+        paresVisitaEntrega: _paresVisitaEntrega,
+        repetirMeses: _repetirMeses,
         usuariosVinculados: _usuariosVinculados,
       );
+
       widget.onSaved();
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Cronograma guardado con éxito. Secuencias futuras generadas.',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context);
+      }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al guardar el cronograma: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Programar Pedido')),
+      appBar: AppBar(title: const Text('Programar Secuencia de Pedidos')),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
@@ -179,6 +243,7 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // --- SECCIÓN 1: PROVEEDOR MAESTRO ---
                   LayoutBuilder(
                     builder: (context, constraints) {
                       return DropdownMenu<String>(
@@ -191,93 +256,212 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                         inputDecorationTheme: const InputDecorationTheme(
                           border: OutlineInputBorder(),
                         ),
+                        initialSelection: _proveedorSeleccionado,
                         dropdownMenuEntries: _proveedoresDb.map((prov) {
                           return DropdownMenuEntry<String>(
                             value: prov,
                             label: prov,
                           );
                         }).toList(),
+                        onSelected: (val) =>
+                            setState(() => _proveedorSeleccionado = val),
                       );
                     },
                   ),
                   const SizedBox(height: 16),
 
-                  DropdownButtonFormField<int>(
-                    value: _frecuenciaSeleccionada,
-                    decoration: const InputDecoration(
-                      labelText: 'Frecuencia de Visitas',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 1,
-                        child: Text('1 vez al mes (Única)'),
+                  // --- SECCIÓN 2: FRECUENCIA Y DURACIÓN (PARALELOS) ---
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: _frecuenciaSeleccionada,
+                          decoration: const InputDecoration(
+                            labelText: 'Frecuencia de Ciclo',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: _opcionesFrecuencia.map((frec) {
+                            String label = frec;
+                            if (frec == 'Mensual')
+                              label = '1 vez al mes (Mensual)';
+                            if (frec == 'Quincenal')
+                              label = '2 veces al mes (Quincenal)';
+                            if (frec == 'Semanal')
+                              label = '4 veces al mes (Semanal)';
+                            return DropdownMenuItem(
+                              value: frec,
+                              child: Text(label),
+                            );
+                          }).toList(),
+                          onChanged: (val) =>
+                              setState(() => _frecuenciaSeleccionada = val!),
+                        ),
                       ),
-                      DropdownMenuItem(
-                        value: 2,
-                        child: Text('2 veces al mes (Quincenal)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 4,
-                        child: Text('4 veces al mes (Semanal)'),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: _repetirMeses,
+                          decoration: const InputDecoration(
+                            labelText: 'Repetir Secuencia por:',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: _opcionesDuracion.entries.map((entry) {
+                            return DropdownMenuItem(
+                              value: entry.key,
+                              child: Text(entry.value),
+                            );
+                          }).toList(),
+                          onChanged: (val) =>
+                              setState(() => _repetirMeses = val!),
+                        ),
                       ),
                     ],
-                    onChanged: (val) =>
-                        setState(() => _frecuenciaSeleccionada = val!),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
 
-                  // ---> UI ACTUALIZADA: Dos botones para las fechas <---
-                  // 1. Botón de Visita
-                  ListTile(
-                    shape: RoundedRectangleBorder(
-                      side: const BorderSide(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    leading: const Icon(
-                      Icons.calendar_today,
-                      color: Colors.blue,
-                    ),
-                    title: Text(
-                      _fechaSeleccionada == null
-                          ? '1. Seleccionar Día de Visita'
-                          : 'Visita: ${DateFormat('dd/MM/yyyy').format(_fechaSeleccionada!)} a las ${_horaSeleccionada!.format(context)}',
-                    ),
-                    onTap: _seleccionarFechaHora,
+                  // --- SECCIÓN 3: PARES RELACIONALES DINÁMICOS ---
+                  const Row(
+                    children: [
+                      Icon(Icons.link, color: Colors.grey),
+                      SizedBox(width: 8),
+                      Text(
+                        'Configuración de Visitas y Entregas Conectadas:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
 
-                  // 2. Botón de Entrega
-                  ListTile(
-                    shape: RoundedRectangleBorder(
-                      side: const BorderSide(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(4),
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _paresVisitaEntrega.length,
+                    itemBuilder: (context, index) {
+                      final par = _paresVisitaEntrega[index];
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Punto de Conexión #${index + 1}',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
+                                  ),
+                                  if (_paresVisitaEntrega.length > 1)
+                                    IconButton(
+                                      constraints: const BoxConstraints(),
+                                      padding: EdgeInsets.zero,
+                                      icon: const Icon(
+                                        Icons.delete_forever,
+                                        color: Colors.redAccent,
+                                      ),
+                                      onPressed: () => _eliminarPar(index),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              // Sub-botón 1: Día de Visita
+                              ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(
+                                  Icons.calendar_today,
+                                  color: Colors.blue,
+                                ),
+                                title: const Text(
+                                  'Día y Hora de Visita (Toma de Pedido)',
+                                ),
+                                subtitle: Text(
+                                  DateFormat(
+                                    'EEEE, dd/MM/yyyy - HH:mm',
+                                  ).format(par['visita']!),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                trailing: const Icon(
+                                  Icons.arrow_forward_ios,
+                                  size: 14,
+                                ),
+                                onTap: () =>
+                                    _seleccionarFechaHoraPar(index, 'visita'),
+                              ),
+                              const Divider(height: 8),
+                              // Sub-botón 2: Día de Entrega Relacionado
+                              ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(
+                                  Icons.local_shipping,
+                                  color: Colors.orange,
+                                ),
+                                title: const Text(
+                                  'Día y Hora de Entrega (Llegada Física)',
+                                ),
+                                subtitle: Text(
+                                  DateFormat(
+                                    'EEEE, dd/MM/yyyy - HH:mm',
+                                  ).format(par['entrega']!),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                trailing: const Icon(
+                                  Icons.arrow_forward_ios,
+                                  size: 14,
+                                ),
+                                onTap: () =>
+                                    _seleccionarFechaHoraPar(index, 'entrega'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+
+                  OutlinedButton.icon(
+                    onPressed: _agregarOtroPar,
+                    icon: const Icon(Icons.add_circle_outline),
+                    label: const Text(
+                      'Añadir otra visita/entrega semanal a este proveedor',
                     ),
-                    leading: const Icon(
-                      Icons.local_shipping,
-                      color: Colors.green,
-                    ),
-                    title: Text(
-                      _fechaEntregaSeleccionada == null
-                          ? '2. Seleccionar Día de Entrega'
-                          : 'Llegada: ${DateFormat('dd/MM/yyyy').format(_fechaEntregaSeleccionada!)}',
-                    ),
-                    onTap: _seleccionarFechaEntrega,
                   ),
                   const SizedBox(height: 24),
 
-                  // Selección de Usuarios
+                  // --- SECCIÓN 4: USUARIOS VINCULADOS ---
                   const Text(
-                    'Usuarios Asignados (Recibirán alertas):',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    'Usuarios Asignados para Alertas:',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                   ),
                   const SizedBox(height: 8),
                   Container(
                     decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
+                      border: Border.all(color: Colors.grey.shade400),
                       borderRadius: BorderRadius.circular(4),
                     ),
-                    constraints: const BoxConstraints(maxHeight: 200),
+                    constraints: const BoxConstraints(maxHeight: 160),
                     child: ListView.builder(
                       shrinkWrap: true,
                       itemCount: _usuariosDb.length,
@@ -287,7 +471,11 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                           u.nombreUsuario,
                         );
                         return CheckboxListTile(
-                          title: Text(u.nombreUsuario),
+                          dense: true,
+                          title: Text(
+                            u.nombreUsuario,
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
                           subtitle: Text(u.rol),
                           value: isSelected,
                           onChanged: (bool? checked) {
@@ -303,17 +491,23 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                       },
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 28),
 
+                  // --- BOTÓN FINAL GUARDAR ---
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
                     ),
                     onPressed: _guardar,
-                    icon: const Icon(Icons.save),
+                    icon: const Icon(Icons.cloud_upload),
                     label: const Text(
-                      'Generar Cronograma',
-                      style: TextStyle(fontSize: 16),
+                      'Proyectar y Generar Calendario',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],

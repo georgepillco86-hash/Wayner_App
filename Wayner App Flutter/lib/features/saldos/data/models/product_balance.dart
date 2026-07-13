@@ -11,9 +11,19 @@ class ProductBalance {
   double iva;
   double costo;
 
-  // --- NUEVAS PROPIEDADES PREDICTIVAS ---
+  // --- PROPIEDADES PREDICTIVAS BÁSICAS ---
   final double vdp; // Venta Diaria Promedio
   final int leadTimeDias; // Días de demora del proveedor
+
+  // --- NUEVAS PROPIEDADES DEL CRONOGRAMA Y ESTADÍSTICA ---
+  final bool alertaLeadTime;
+  final String? mensajeAlerta;
+  final String? proveedorObjetivo;
+
+  // Datos matemáticos desde Python
+  final double volatilidad;
+  final double stockSeguridad;
+  final double stockMinimoBackend;
 
   ProductBalance({
     required this.codigo,
@@ -28,6 +38,13 @@ class ProductBalance {
     this.vdp = 0.0,
     this.leadTimeDias =
         3, // Por defecto 3 días si el proveedor no tiene uno asignado
+    // Inicialización de los nuevos campos
+    this.alertaLeadTime = false,
+    this.mensajeAlerta,
+    this.proveedorObjetivo,
+    this.volatilidad = 0.0,
+    this.stockSeguridad = 0.0,
+    this.stockMinimoBackend = 0.0,
   });
 
   factory ProductBalance.fromJson(Map<String, dynamic> json) {
@@ -41,7 +58,8 @@ class ProductBalance {
       precio: double.tryParse(json['Precio']?.toString() ?? '0') ?? 0.0,
       iva: double.tryParse(json['IVA']?.toString() ?? '0') ?? 0.0,
       costo: double.tryParse(json['Costo']?.toString() ?? '0') ?? 0.0,
-      // Extraemos los nuevos campos desde el backend
+
+      // Variables Base
       vdp:
           double.tryParse(
             json['vdp']?.toString() ?? json['VDP']?.toString() ?? '0',
@@ -54,6 +72,23 @@ class ProductBalance {
                 '3',
           ) ??
           3,
+
+      // --- NUEVOS CAMPOS MAPEADOS ---
+      alertaLeadTime: json['alerta_lead_time'] == true,
+      mensajeAlerta: json['mensaje_alerta']?.toString(),
+
+      // Intentamos atrapar el proveedor objetivo, si no viene, usamos el nombre general del proveedor
+      proveedorObjetivo:
+          json['proveedor_objetivo']?.toString() ??
+          json['Proveedor']?.toString(),
+
+      // Variables Estadísticas
+      volatilidad:
+          double.tryParse(json['volatilidad']?.toString() ?? '0') ?? 0.0,
+      stockSeguridad:
+          double.tryParse(json['stock_seguridad']?.toString() ?? '0') ?? 0.0,
+      stockMinimoBackend:
+          double.tryParse(json['stock_minimo']?.toString() ?? '0') ?? 0.0,
     );
   }
 
@@ -70,6 +105,12 @@ class ProductBalance {
       'Costo': costo,
       'vdp': vdp,
       'lead_time_dias': leadTimeDias,
+      'alerta_lead_time': alertaLeadTime,
+      'mensaje_alerta': mensajeAlerta,
+      'proveedor_objetivo': proveedorObjetivo,
+      'volatilidad': volatilidad,
+      'stock_seguridad': stockSeguridad,
+      'stock_minimo': stockMinimoBackend,
     };
   }
 
@@ -78,12 +119,19 @@ class ProductBalance {
   // ==========================================
 
   /// Calcula el stock mínimo matemático
-  /// [diasCobertura] = Cuántos días quieres que te dure la mercadería (ej. 7, 14, 30)
+  /// [diasCobertura] = Cuántos días quieres que te dure la mercadería exhibida (ej. 7, 14, 30)
   double calcularStockMinimo({int diasCobertura = 7}) {
     // Si no tiene historial de ventas (VDP = 0), su stock mínimo no se puede calcular
     if (vdp <= 0) return 0;
 
-    // Fórmula: (Ventas diarias * Días de exhibición) + (Ventas diarias * Días que tarda en llegar)
+    // Si el backend ya nos envió el Mínimo Estadístico exacto (Punto de Reorden)
+    if (stockMinimoBackend > 0) {
+      // Usamos la matemática avanzada del backend (que ya incluye el Stock de Seguridad)
+      // y le sumamos lo que deseas tener de exhibición (Cobertura)
+      return stockMinimoBackend + (vdp * diasCobertura);
+    }
+
+    // Fórmula de respaldo (Fallback) en caso de que el backend falle
     return (vdp * diasCobertura) + (vdp * leadTimeDias);
   }
 
