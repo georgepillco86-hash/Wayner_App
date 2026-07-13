@@ -39,6 +39,7 @@ class ProductRepository:
             CodigoBarra,
             MIN(Codigo) AS Codigo,
             MIN(NombreProducto) AS NombreProducto,
+            MIN(NombreProveedor) AS proveedor, -- ---> CORREGIDO: Mapea el proveedor para las alertas <---
             CAST(MAX(Precio) AS DECIMAL(18,6)) AS Precio,
             CAST(MAX(IVA) AS DECIMAL(10,2)) AS IVA,
             CAST(ROUND(MAX(Precio) * (1 + MAX(IVA)/100), 2) AS DECIMAL(18,2)) AS PrecioConIVA
@@ -59,6 +60,7 @@ class ProductRepository:
             CodigoBarra,
             MIN(Codigo) AS Codigo,
             MIN(NombreProducto) AS NombreProducto,
+            MIN(NombreProveedor) AS proveedor, -- ---> CORREGIDO: El buscador también inyecta el proveedor <---
             CAST(MAX(Precio) AS DECIMAL(18,6)) AS Precio,
             CAST(MAX(IVA) AS DECIMAL(10,2)) AS IVA,
             CAST(ROUND(MAX(Precio) * (1 + MAX(IVA)/100), 2) AS DECIMAL(18,2)) AS PrecioConIVA
@@ -115,7 +117,7 @@ class ProductRepository:
             CAST(Precio AS DECIMAL(18,6)) AS Precio,
             CAST(IVA AS DECIMAL(10,2)) AS IVA,
             CAST(Costo AS DECIMAL(18,6)) AS Costo,
-            CAST(IFNULL(Ingreso, 0) AS DECIMAL(18,3)) AS Ingreso,
+            CAST(IFNULL(Ingreso, 0) AS DECIMAL(18,3)) AS TabIngreso,
             CAST(IFNULL(Egreso, 0) AS DECIMAL(18,3)) AS Egreso,
             CAST(IFNULL(ValorIngreso, 0) AS DECIMAL(18,2)) AS ValorIngreso,
             CAST(IFNULL(ValorEgreso, 0) AS DECIMAL(18,2)) AS ValorEgreso,
@@ -204,7 +206,6 @@ class ProductRepository:
             return {}
 
         logger.info(f"[REPO] Ejecutando Bulk Query para {len(codigos)} códigos. Desde: {desde} Hasta: {hasta}")
-        # Ajustamos el formato de la lista para la consulta IN en SQL
         formato = ','.join(['%s'] * len(codigos))
         
         query = f"""
@@ -217,7 +218,6 @@ class ProductRepository:
         GROUP BY CodigoBarra
         """
         
-        # Juntamos los códigos y las fechas en una sola tupla para el conector SQL
         parametros = tuple(codigos) + (desde, hasta)
         try:
             resultados = db.fetch_all(query, parametros)
@@ -226,8 +226,6 @@ class ProductRepository:
             logger.error(f"[REPO] Error ejecutando la consulta en bloque: {str(e)}")
             return {}
 
-        # Convertimos la respuesta [{"CodigoBarra": "123", "total_egreso": 15}] 
-        # a un diccionario rápido {"123": 15.0} para el servicio en Python
         ventas_agrupadas = {}
         if resultados:
             for fila in resultados:
@@ -238,3 +236,38 @@ class ProductRepository:
 
         logger.info(f"[REPO] Diccionario de ventas procesado: {ventas_agrupadas}")
         return ventas_agrupadas
+    
+    def get_ventas_diarias_en_bloque(self, codigos: list[str], desde: str, hasta: str) -> dict:
+        """
+        Devuelve el historial diario de egresos reales desde v_kardexproductos en MySQL.
+        """
+        if not codigos:
+            return {}
+
+        format_strings = ','.join(['%s'] * len(codigos))
+        query = f"""
+            SELECT 
+                TRIM(CodigoBarra) AS codigo, 
+                DATE(Fecha) AS fecha_venta, 
+                SUM(COALESCE(Egreso, 0)) AS cantidad
+            FROM v_kardexproductos
+            WHERE CodigoBarra IN ({format_strings})
+              AND Fecha >= %s AND Fecha <= %s
+            GROUP BY CodigoBarra, DATE(Fecha)
+        """
+        
+        # Conexión limpia usando la variable estructural de tu módulo
+        resultados = db.fetch_all(query, tuple(codigos) + (desde, hasta))
+        
+        bulk = {}
+        for row in resultados:
+            cod = str(row['codigo']).strip()
+            if cod not in bulk:
+                bulk[cod] = []
+                
+            bulk[cod].append({
+                "fecha": str(row['fecha_venta']),
+                "cantidad": float(row['cantidad'])
+            })
+            
+        return bulk

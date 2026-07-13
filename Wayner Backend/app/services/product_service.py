@@ -10,10 +10,10 @@ from app.core.config import settings
 from app.core.exceptions import NotFoundError, ValidationError
 from app.repositories.product_repository import ProductRepository
 from app.repositories.promocion_repository import PromocionRepository
+from app.repositories.cronograma_repository import CronogramaRepository
 
 # Inicializar logger
 logger = logging.getLogger(__name__)
-
 
 class TTLCache:
     def __init__(self, ttl_seconds: int) -> None:
@@ -33,11 +33,11 @@ class TTLCache:
     def set(self, key: str, value: Any) -> None:
         self._store[key] = (time.time(), value)
 
-
 class ProductService:
     def __init__(self, repository: ProductRepository) -> None:
         self.repository = repository
         self.cache = TTLCache(settings.cache_ttl_seconds)
+        self.cronograma_repo = CronogramaRepository() 
 
     def _cache_get(self, key: str) -> Any | None:
         if not settings.enable_cache:
@@ -56,11 +56,51 @@ class ProductService:
             raise ValidationError("El código de barras no puede estar vacío")
         return barcode
 
+    @staticmethod
+    def _calcular_estadistica_producto(ventas_diarias: list[dict[str, Any]], lead_time: int, dias_analisis: int) -> dict:
+        """
+        Motor matemático para VDP, Desviación Estándar y Punto de Reorden.
+        ventas_diarias: [{'fecha': 'YYYY-MM-DD', 'cantidad': 2.0}, ...]
+        """
+        if not ventas_diarias:
+            return {"vdp": 0.0, "desviacion": 0.0, "stock_seguridad": 0, "minimo": 0}
+
+        # 1. Agrupar las ventas exactas por día (para identificar los ceros)
+        mapa_ventas = {v["fecha"]: v["cantidad"] for v in ventas_diarias}
+        
+        serie_diaria = []
+        fecha_fin = datetime.now()
+        fecha_inicio = fecha_fin - timedelta(days=dias_analisis)
+
+        # 2. Construir la serie de tiempo rellenando los días sin venta con 0
+        for i in range(dias_analisis):
+            dia_actual = (fecha_inicio + timedelta(days=i)).strftime("%Y-%m-%d")
+            serie_diaria.append(mapa_ventas.get(dia_actual, 0.0))
+
+        # 3. VDP Matemático
+        vdp = sum(serie_diaria) / dias_analisis
+
+        # 4. Volatilidad (Desviación Estándar)
+        varianza = sum((x - vdp) ** 2 for x in serie_diaria) / dias_analisis
+        desviacion_estandar = math.sqrt(varianza)
+
+        # 5. Stock de Seguridad (Z = 1.65 para 95% de nivel de servicio)
+        stock_seguridad = 1.65 * desviacion_estandar * math.sqrt(lead_time)
+
+        # 6. Punto de Reorden Real
+        minimo_sugerido = (vdp * lead_time) + stock_seguridad
+
+        return {
+            "vdp": round(vdp, 4),
+            "desviacion": round(desviacion_estandar, 4),
+            "stock_seguridad": math.ceil(stock_seguridad),
+            "minimo": math.ceil(minimo_sugerido)
+        }
+
     def _inyectar_vdp_dinamico(self, data: list[dict[str, Any]] | dict[str, Any] | None) -> list[dict[str, Any]] | dict[str, Any] | None:
         """
-        Calcula el stock mínimo (VDP) dinámicamente mediante Bulk Query
-        para evitar sobrecargar la base de datos espejo e inyecta
-        las variables para los modelos dinámicos en Flutter.
+        Calcula el stock mínimo estadístico cruzando la volatilidad de ventas 
+        con los tiempos de entrega del cronograma de proveedores.
         """
         if not data:
             logger.warning("[PRODUCT_SERVICE] _inyectar_vdp_dinamico recibió data vacía.")
@@ -69,75 +109,101 @@ class ProductService:
         is_dict = isinstance(data, dict)
         items = [data] if is_dict else data
 
-        logger.info(f"[PRODUCT_SERVICE] Iniciando inyección para {len(items)} productos.")
+        logger.info(f"[PRODUCT_SERVICE] Iniciando cálculo estadístico para {len(items)} productos.")
 
-        # 1. Extraer los códigos de la página/lista actual
+        # 1. Extraer códigos y proveedores únicos
         codigos_a_consultar = []
+        proveedores_a_consultar = set()
+        
         for item in items:
-            codigo = item.get("codigo") or item.get("codigo_barra") or item.get("Codigo")
+            codigo = item.get("codigo") or item.get("codigo_barra") or item.get("Codigo") or item.get("CodigoBarra")
+            
+            # ---> CORRECCIÓN CLAVE: Capturar todas las formas posibles de 'Proveedor' <---
+            proveedor = item.get("proveedor") or item.get("Proveedor") or item.get("NombreProveedor") or item.get("proveedor_nombre")
+            
             if codigo and codigo not in codigos_a_consultar:
                 codigos_a_consultar.append(codigo)
+            if proveedor:
+                proveedores_a_consultar.add(proveedor)
 
-        logger.info(f"[PRODUCT_SERVICE] Se extrajeron {len(codigos_a_consultar)} códigos únicos para consultar.")
-
-        # 2. Definir fechas (últimos 30 días)
+        # 2. Definir ventana de análisis (ej: 45 días para capturar estacionalidad mensual)
+        dias_analisis = 45
         hasta_date = datetime.now()
-        desde_date = hasta_date - timedelta(days=30)
+        desde_date = hasta_date - timedelta(days=dias_analisis)
         desde_str = desde_date.strftime("%Y-%m-%d")
         hasta_str = hasta_date.strftime("%Y-%m-%d")
 
-        # 3. Hacer UNA SOLA consulta a la base de datos
+        # 3. Consultas en bloque (Base de datos)
         ventas_bulk = {}
-        if codigos_a_consultar:
-            try:
-                logger.info("[PRODUCT_SERVICE] Llamando a get_ventas_en_bloque...")
-                ventas_bulk = self.repository.get_ventas_en_bloque(
-                    codigos=codigos_a_consultar,
-                    desde=desde_str,
-                    hasta=hasta_str
-                )
-            except Exception as e:
-                logger.error(f"[PRODUCT_SERVICE] Falló la llamada a bulk query: {str(e)}")
-                ventas_bulk = {}
+        lead_times_bulk = {}
+
+        try:
+            ventas_bulk = self.repository.get_ventas_diarias_en_bloque(
+                codigos=codigos_a_consultar,
+                desde=desde_str,
+                hasta=hasta_str
+            )
+            
+            for prov in proveedores_a_consultar:
+                lead_times_bulk[prov] = self.cronograma_repo.obtener_lead_time_proveedor(prov)
+
+        except Exception as e:
+            logger.error(f"[PRODUCT_SERVICE] Falló la extracción bulk de datos: {str(e)}")
 
         primer_item_logueado = False
 
-        # 4. Inyectar el cálculo iterando rápidamente en memoria
+        # 4. Motor de Inyección
         for item in items:
-            codigo = item.get("codigo") or item.get("codigo_barra") or item.get("Codigo")
+            codigo = item.get("codigo") or item.get("codigo_barra") or item.get("Codigo") or item.get("CodigoBarra") or ""
             
-            # Leemos del diccionario en memoria (0.0 si no hubo ventas)
-            ventas_totales = ventas_bulk.get(codigo, 0.0)
+            # ---> CORRECCIÓN CLAVE: Re-aplicar la extracción exhaustiva en el mapeo <---
+            proveedor = item.get("proveedor") or item.get("Proveedor") or item.get("NombreProveedor") or item.get("proveedor_nombre")
+            
+            ventas_diarias_producto = ventas_bulk.get(codigo, [])
+            
+            if not proveedor:
+                lead_time_real = 2  
+                item["alerta_lead_time"] = True
+                item["mensaje_alerta"] = "No hay proveedor asignado. Cálculo estimado a 2 días."
+                item["proveedor_objetivo"] = None
+            else:
+                lead_time_db = lead_times_bulk.get(proveedor)
+                if lead_time_db is None:
+                    lead_time_real = 2  
+                    item["alerta_lead_time"] = True
+                    item["mensaje_alerta"] = f"No hay cronograma para {proveedor}. Cálculo estimado a 2 días."
+                    item["proveedor_objetivo"] = proveedor
+                else:
+                    lead_time_real = lead_time_db
+                    item["alerta_lead_time"] = False
+                    item["mensaje_alerta"] = ""
+                    item["proveedor_objetivo"] = None
 
-            # Variables Logísticas
-            dias_historial = 30
-            pvd = ventas_totales / dias_historial if dias_historial > 0 else 0
-            factor_estacionalidad = 1.0
-            
-            # Priorizamos el lead_time desde la base de datos si existe, si no, defecto 7
-            lead_time = int(item.get("lead_time_dias") or item.get("LeadTime") or 7)
-            dias_seguridad = 3  # Colchón de seguridad
+            # Ejecutar Matemática
+            estadistica = self._calcular_estadistica_producto(
+                ventas_diarias=ventas_diarias_producto,
+                lead_time=lead_time_real,
+                dias_analisis=dias_analisis
+            )
 
             # ==========================================
             # INYECCIÓN PARA FLUTTER
             # ==========================================
-            item["vdp"] = round(pvd, 4)
-            item["lead_time_dias"] = lead_time
-
-            # Fórmula VDP (Compatibilidad extra)
-            vdp_dinamico_float = ((pvd * factor_estacionalidad) * lead_time) + (pvd * dias_seguridad)
-            vdp_calculado = math.ceil(vdp_dinamico_float)
-
-            item["stock_minimo"] = vdp_calculado
-            if "min" in item: item["min"] = vdp_calculado
-            if "Min" in item: item["Min"] = vdp_calculado
-            if "stock_estimado_minimo" in item: item["stock_estimado_minimo"] = vdp_calculado
+            item["vdp"] = estadistica["vdp"]
+            item["lead_time_dias"] = lead_time_real
+            item["volatilidad"] = estadistica["desviacion"]
+            item["stock_seguridad"] = estadistica["stock_seguridad"]
+            
+            # El Mínimo unificado
+            item["stock_minimo"] = estadistica["minimo"]
+            if "min" in item: item["min"] = estadistica["minimo"]
+            if "Min" in item: item["Min"] = estadistica["minimo"]
+            if "stock_estimado_minimo" in item: item["stock_estimado_minimo"] = estadistica["minimo"]
 
             if not primer_item_logueado:
-                logger.info(f"[PRODUCT_SERVICE] EJEMPLO INYECCIÓN -> Codigo: {codigo} | Ventas Hist.: {ventas_totales} | vdp Inyectado: {item['vdp']} | lead_time Inyectado: {item['lead_time_dias']}")
+                logger.info(f"📊 [ESTADÍSTICA] {codigo} -> VDP: {estadistica['vdp']} | SS: {estadistica['stock_seguridad']} | LTime: {lead_time_real} | MÍN: {estadistica['minimo']}")
                 primer_item_logueado = True
 
-        logger.info("[PRODUCT_SERVICE] Inyección completada con éxito.")
         return items[0] if is_dict else items
 
     def health(self) -> dict[str, Any]:

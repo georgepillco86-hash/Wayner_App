@@ -77,9 +77,10 @@ class ProveedorRepository:
         print(f"📞 [PASO 1] Petición recibida -> Buscando: '{termino}', Prov: '{proveedor_especifico}', Clase: '{clase_especifica}'")
         
         try:
+            # ---> CORREGIDO: Forzamos la conversión a ::date para evitar objetos timedelta <---
             query_tiempos = """
             SELECT proveedor, 
-                   MAX(fecha_entrega - fecha_programada) as lead_time_calculado 
+                   MAX(fecha_entrega::date - fecha_programada::date) as lead_time_calculado 
             FROM ferrotienda.cronograma_visitas 
             WHERE estado = 'Pendiente' AND fecha_entrega IS NOT NULL
             GROUP BY proveedor
@@ -87,6 +88,7 @@ class ProveedorRepository:
             tiempos_bd = pedidos_db.fetch_all(query_tiempos)
             tiempos_map = {row["proveedor"]: int(row["lead_time_calculado"]) for row in tiempos_bd} if tiempos_bd else {}
 
+            # ... El resto del código de la función se queda exactamente igual ...
             query_pg = """
             SELECT codigo, codigo_barra, nombre_producto, proveedor, clase 
             FROM p_proveedores.catalogo_proveedores

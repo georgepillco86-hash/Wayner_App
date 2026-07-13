@@ -1,64 +1,72 @@
 import json
-from datetime import timedelta, datetime
+import datetime
 from typing import List
 from app.core.pedidos_database import pedidos_db 
 
 class CronogramaRepository:
+
+    def eliminar_cronograma_proveedor(self, proveedor: str):
+        """Elimina el cronograma anterior de un proveedor para permitir la edición."""
+        query = "DELETE FROM ferrotienda.cronograma_visitas WHERE proveedor = %s"
+        pedidos_db.execute(query, (proveedor,))
+
     def crear_cronograma(self, data: dict) -> bool:
         proveedor = data["proveedor"]
-        frecuencia = data["frecuencia"]
-        fecha_inicio = data["fecha_inicio"] # Objeto datetime
-        # 1. Obtenemos la fecha de entrega del payload (si no viene, sumamos 3 días por defecto)
-        fecha_entrega_inicial = data.get("fecha_entrega") 
+        frecuencia = data["frecuencia"] # "Semanal", "Quincenal", "Mensual"
+        pares = data["pares"] # [{'visita': datetime, 'entrega': datetime}]
+        repetir_meses = data["repetir_meses"] # 1, 6, 12, 60
         usuarios = json.dumps(data["usuarios_vinculados"])
         
-        # ---> MAGIA: Calculamos el tiempo de espera (Lead Time) para aplicarlo a las visitas futuras <---
-        if fecha_entrega_inicial:
-            # Si ambos son datetime, sacamos la diferencia en días
-            lead_time_dias = (fecha_entrega_inicial.date() - fecha_inicio.date()).days
+        # 1. ELIMINACIÓN INTELIGENTE (Editar): Borramos el historial futuro de este proveedor
+        self.eliminar_cronograma_proveedor(proveedor)
+        
+        # 2. CONFIGURACIÓN DE LA MATEMÁTICA DE SALTOS
+        if frecuencia == 'Semanal':
+            semanas_salto = 1
+        elif frecuencia == 'Quincenal':
+            semanas_salto = 2
+        elif frecuencia == 'Mensual':
+            semanas_salto = 4
         else:
-            lead_time_dias = 3
-            
-        # Nos aseguramos de que el tiempo de espera no sea negativo (viajar en el tiempo)
-        if lead_time_dias < 0:
-            lead_time_dias = 0
+            semanas_salto = 1
+
+        # Calculamos cuántas semanas en total dura este cronograma
+        # 1 mes = 4 semanas de duración
+        total_semanas_duracion = repetir_meses * 4 
         
-        # 2. Guardar la regla maestra
-        query_regla = """
-            INSERT INTO ferrotienda.cronograma_pedidos 
-            (proveedor, frecuencia, fecha_inicio, usuarios_vinculados)
-            VALUES (%s, %s, %s, %s) RETURNING id;
-        """
-        cronograma_id = pedidos_db.execute(query_regla, (proveedor, frecuencia, fecha_inicio, usuarios))
-        
-        # 3. Calcular automáticamente las fechas (manteniendo la hora exacta)
-        fechas_calculadas = [fecha_inicio]
-        
-        if frecuencia == 2:
-            # Cada 15 días, a la misma hora
-            fechas_calculadas.append(fecha_inicio + timedelta(days=15))
-        elif frecuencia == 4:
-            # 1 cada semana, a la misma hora
-            fechas_calculadas.append(fecha_inicio + timedelta(days=7))
-            fechas_calculadas.append(fecha_inicio + timedelta(days=14))
-            fechas_calculadas.append(fecha_inicio + timedelta(days=21))
+        # 3. CLONACIÓN DE LOS PARES
+        fechas_a_insertar = []
+        for par in pares:
+            # En FastAPI/Pydantic estos ya vienen como objetos datetime si el schema está bien, 
+            # pero por seguridad los parseamos si vienen como string ISO:
+            visita_str = par['visita'].replace('Z', '') if isinstance(par['visita'], str) else par['visita']
+            entrega_str = par['entrega'].replace('Z', '') if isinstance(par['entrega'], str) else par['entrega']
             
-        # 4. Guardar las visitas programadas con sus entregas correspondientes
-        for fecha_visita in fechas_calculadas:
-            # Calculamos cuándo llega el pedido de esta visita específica sumando los días de espera
-            fecha_entrega_visita = fecha_visita + timedelta(days=lead_time_dias)
+            visita_base = datetime.datetime.fromisoformat(str(visita_str)) if isinstance(visita_str, str) else visita_str
+            entrega_base = datetime.datetime.fromisoformat(str(entrega_str)) if isinstance(entrega_str, str) else entrega_str
             
+            semanas_avanzadas = 0
+            while semanas_avanzadas < total_semanas_duracion:
+                # Proyectar al futuro manteniendo el mismo día de la semana y la misma hora
+                visita_futura = visita_base + datetime.timedelta(weeks=semanas_avanzadas)
+                entrega_futura = entrega_base + datetime.timedelta(weeks=semanas_avanzadas)
+                fechas_a_insertar.append((visita_futura, entrega_futura))
+                
+                # Avanzamos según la frecuencia
+                semanas_avanzadas += semanas_salto
+                
+        # 4. GUARDADO EN LA BASE DE DATOS (Usando ÚNICAMENTE cronograma_visitas)
+        for visita_dt, entrega_dt in fechas_a_insertar:
             query_visita = """
                 INSERT INTO ferrotienda.cronograma_visitas 
-                (cronograma_id, proveedor, fecha_programada, fecha_entrega, usuarios_vinculados)
+                (proveedor, fecha_programada, fecha_entrega, estado, usuarios_vinculados)
                 VALUES (%s, %s, %s, %s, %s);
             """
-            pedidos_db.execute(query_visita, (cronograma_id, proveedor, fecha_visita, fecha_entrega_visita, usuarios))
+            pedidos_db.execute(query_visita, (proveedor, visita_dt, entrega_dt, 'Pendiente', usuarios))
             
         return True
 
     def obtener_visitas_mes(self, mes: int, anio: int) -> List[dict]:
-        # ---> ACTUALIZADO: Agregamos fecha_entrega a la extracción <---
         query = """
             SELECT id, proveedor, fecha_programada, fecha_entrega, estado, usuarios_vinculados
             FROM ferrotienda.cronograma_visitas
@@ -74,3 +82,18 @@ class CronogramaRepository:
         
     def marcar_notificacion_leida(self, notificacion_id: int):
         pedidos_db.execute("UPDATE ferrotienda.notificaciones SET leido = TRUE WHERE id = %s", (notificacion_id,))
+
+    def obtener_lead_time_proveedor(self, nombre_proveedor: str) -> int | None:
+        query = """
+            SELECT (fecha_entrega::date - fecha_programada::date) as lead_time
+            FROM ferrotienda.cronograma_visitas
+            WHERE proveedor = %s AND fecha_entrega IS NOT NULL
+            ORDER BY fecha_programada DESC
+            LIMIT 1;
+        """
+        resultados = pedidos_db.fetch_all(query, (nombre_proveedor,))
+        if resultados and len(resultados) > 0:
+            lead_time = resultados[0].get('lead_time')
+            if lead_time is not None:
+                return max(0, int(lead_time))
+        return None
