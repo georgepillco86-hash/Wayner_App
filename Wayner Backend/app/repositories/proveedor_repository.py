@@ -5,12 +5,12 @@ from app.core.pedidos_database import pedidos_db
 class ProveedorRepository:
     
     def get_proveedores_list(self) -> list[str]:
-        # ---> ACTUALIZADO: Solo trae proveedores con productos activos en el último año <---
+        # ---> CORRECCIÓN: Eliminamos el filtro de 1 año para que carguen todos los proveedores
         query = """
         SELECT DISTINCT proveedor 
         FROM p_proveedores.catalogo_proveedores 
         WHERE proveedor IS NOT NULL 
-          AND (ultimo_movimiento >= CURRENT_DATE - INTERVAL '1 year' OR ultimo_movimiento IS NULL)
+          AND proveedor != ''
         ORDER BY proveedor;
         """
         try:
@@ -21,12 +21,12 @@ class ProveedorRepository:
             return []
 
     def get_clases_list(self) -> list[str]:
-        # ---> ACTUALIZADO: Solo trae clases con productos activos en el último año <---
+        # ---> CORRECCIÓN: Eliminamos el filtro de 1 año para que carguen todas las clases
         query = """
         SELECT DISTINCT clase 
         FROM p_proveedores.catalogo_proveedores 
         WHERE clase IS NOT NULL 
-          AND (ultimo_movimiento >= CURRENT_DATE - INTERVAL '1 year' OR ultimo_movimiento IS NULL)
+          AND clase != ''
         ORDER BY clase;
         """
         try:
@@ -68,16 +68,10 @@ class ProveedorRepository:
         except Exception as e:
             return {"precio_vivo": 0, "iva_vivo": 0, "costo_vivo": 0}
 
-    # ---> BÚSQUEDA RÁPIDA HÍBRIDA POR PYTHON <---
-    # ---> BÚSQUEDA RÁPIDA HÍBRIDA POR PYTHON (TIEMPO REAL) <---
-# ---> BÚSQUEDA RÁPIDA HÍBRIDA POR PYTHON (CON LOGS DE DIAGNÓSTICO) <---
-# ---> BÚSQUEDA RÁPIDA HÍBRIDA POR PYTHON (CON RASTREADORES) <---
     def buscar_rapido_proveedores(self, termino: str, proveedor_especifico: str = None, clase_especifica: str = None) -> list:
-        # 📍 RASTREADOR 1: Verificamos si Flutter logró conectarse
         print(f"📞 [PASO 1] Petición recibida -> Buscando: '{termino}', Prov: '{proveedor_especifico}', Clase: '{clase_especifica}'")
         
         try:
-            # ---> CORREGIDO: Forzamos la conversión a ::date para evitar objetos timedelta <---
             query_tiempos = """
             SELECT proveedor, 
                    MAX(fecha_entrega::date - fecha_programada::date) as lead_time_calculado 
@@ -88,12 +82,11 @@ class ProveedorRepository:
             tiempos_bd = pedidos_db.fetch_all(query_tiempos)
             tiempos_map = {row["proveedor"]: int(row["lead_time_calculado"]) for row in tiempos_bd} if tiempos_bd else {}
 
-            # ... El resto del código de la función se queda exactamente igual ...
+            # ---> CORRECCIÓN: Eliminamos el filtro de 1 año aquí también
             query_pg = """
             SELECT codigo, codigo_barra, nombre_producto, proveedor, clase 
             FROM p_proveedores.catalogo_proveedores
             WHERE 1=1
-              AND (ultimo_movimiento >= CURRENT_DATE - INTERVAL '1 year' OR ultimo_movimiento IS NULL)
             """
             params_pg = []
             
@@ -116,10 +109,7 @@ class ProveedorRepository:
             else:
                 query_pg += " LIMIT 50"
             
-            # Ejecutamos la búsqueda en Postgres
             resultados_pg = pedidos_db.fetch_all(query_pg, tuple(params_pg))
-            
-            # 📍 RASTREADOR 2: Verificamos cuántos productos encontró Postgres
             print(f"🔎 [PASO 2] PostgreSQL encontró {len(resultados_pg if resultados_pg else [])} productos en el catálogo espejo.")
             
             if not resultados_pg:
@@ -129,6 +119,8 @@ class ProveedorRepository:
             codigos = [str(row["codigo"]).strip() for row in resultados_pg if row.get("codigo")]
             if not codigos:
                 return []
+
+            # ... (El resto de la función hacia abajo queda exactamente igual, con tu consulta MySQL de marcas y el cruce del VDP) ...
 
             datos_vivos = {}
             lote_size = 100
@@ -143,6 +135,7 @@ class ProveedorRepository:
                 query_mysql = f"""
                 SELECT 
                     TRIM(k.Codigo) AS Codigo,
+                    MAX(s.Marca) AS Marca,         -- 🔥 1. AÑADIMOS LA EXTRACCIÓN DE LA MARCA DESDE LA VISTA DE SALDOS
                     COALESCE(MAX(s.Stock), 0) AS Stock,
                     CASE 
                         WHEN COALESCE(MAX(k.IVA), 0) > 0 THEN COALESCE(MAX(k.Precio), 0) * (1 + (MAX(k.IVA) / 100.0))
@@ -186,6 +179,7 @@ class ProveedorRepository:
                     "Codigo": cod,
                     "CodigoBarra": pg_row.get("codigo_barra"),
                     "Nombre": pg_row.get("nombre_producto", ""),
+                    "Marca": vivo.get("Marca") or "-",    # 🔥 2. INYECTAMOS LA MARCA AL DICCIONARIO
                     "Proveedor": proveedor_actual,
                     "Clase": pg_row.get("clase"), 
                     "Stock": safe_float(vivo.get("Stock", 0)),

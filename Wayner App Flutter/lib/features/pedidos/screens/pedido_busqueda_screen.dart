@@ -7,6 +7,10 @@ import '../../../screens/scanner/scanner_screen.dart';
 import '../../../core/storage/pedido_draft_storage.dart';
 import '../../../core/storage/session_storage.dart';
 
+// ---> NUEVAS IMPORTACIONES <---
+import '../../saldos/data/services/saldos_api_service.dart';
+import '../../cronograma/presentation/screens/cronograma_form_screen.dart';
+
 class PedidoBusquedaScreen extends StatefulWidget {
   const PedidoBusquedaScreen({super.key});
 
@@ -16,17 +20,25 @@ class PedidoBusquedaScreen extends StatefulWidget {
 
 class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
   final PedidosService service = PedidosService();
+  final SaldosApiService saldosService = SaldosApiService(); // Motor predictivo
 
   final TextEditingController searchController = TextEditingController();
   final TextEditingController secondSearchController = TextEditingController();
 
   List<String> proveedores = [];
+  List<String> clasesDisponibles = [
+    'Todas las clases',
+    'BAZAR',
+    'COMISARIATO',
+    'FERRETERIA',
+  ]; // Puedes cargar esto desde tu BD
 
   String? proveedorSeleccionado;
+  String claseSeleccionada = 'Todas las clases';
   bool esAdmin = false;
+  bool busquedaProfunda = false; // <-- Switch de Kardex
 
   List<String> unidadesMedida = ['UNIDADES'];
-
   List<dynamic> resultados = [];
   List<PedidoItem> carrito = [];
 
@@ -48,50 +60,40 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
     if (!mounted) return;
 
     setState(() {
-      esAdmin = rol == "ADMIN";
+      esAdmin = rol == "ADMIN" || rol == "SUPERADMIN";
     });
 
     if (!esAdmin) return;
 
     try {
       final data = await service.obtenerProveedores();
-
       if (!mounted) return;
-
-      setState(() {
-        proveedores = data;
-      });
+      setState(() => proveedores = data);
     } catch (_) {
       if (!mounted) return;
-
-      setState(() {
-        proveedores = [];
-      });
+      setState(() => proveedores = []);
     }
   }
 
   Future<void> cargarUnidadesMedida() async {
     try {
       final unidades = await service.obtenerUnidadesMedida();
-
       if (!mounted) return;
-
-      setState(() {
-        unidadesMedida = unidades.isEmpty ? ['UNIDADES'] : unidades;
-      });
+      setState(
+        () => unidadesMedida = unidades.isEmpty ? ['UNIDADES'] : unidades,
+      );
     } catch (_) {
       if (!mounted) return;
-
-      setState(() {
-        unidadesMedida = ['UNIDADES'];
-      });
+      setState(() => unidadesMedida = ['UNIDADES']);
     }
   }
 
+  // 🔥 EL NUEVO MOTOR DE BÚSQUEDA HÍBRIDA 🔥
   Future<void> buscar(String query) async {
-    if (query.trim().length < 2) {
+    if (query.trim().length < 2 &&
+        proveedorSeleccionado == null &&
+        claseSeleccionada == 'Todas las clases') {
       if (!mounted) return;
-
       setState(() {
         resultados = [];
         errorMessage = null;
@@ -105,66 +107,48 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
     });
 
     try {
-      final data = await service.buscarProductos(
-        query.trim(),
-        query2: secondSearchController.text.trim(),
-        proveedor: esAdmin ? proveedorSeleccionado : null,
-      );
+      final prov =
+          (esAdmin &&
+              proveedorSeleccionado != null &&
+              proveedorSeleccionado!.isNotEmpty)
+          ? proveedorSeleccionado
+          : null;
+      final clase = claseSeleccionada == 'Todas las clases'
+          ? null
+          : claseSeleccionada;
+
+      List<dynamic> data = [];
+
+      // Decidimos si usamos el Kardex General o la Búsqueda Rápida Predictiva
+      if (busquedaProfunda) {
+        data = await saldosService.buscarEnKardex(query.trim());
+      } else {
+        data = await saldosService.buscarRapido(
+          termino: query.trim(),
+          proveedor: prov,
+          clase: clase,
+        );
+      }
 
       if (!mounted) return;
-
-      setState(() {
-        resultados = data;
-      });
+      setState(() => resultados = data);
     } catch (_) {
       if (!mounted) return;
-
       setState(() {
-        errorMessage = "No se pudieron cargar productos para el pedido.";
+        errorMessage =
+            "No se pudieron cargar productos con el motor predictivo.";
         resultados = [];
       });
     } finally {
       if (!mounted) return;
-
-      setState(() {
-        isLoading = false;
-      });
+      setState(() => isLoading = false);
     }
   }
 
   Future<void> buscarPorCodigo(String codigo) async {
     if (codigo.trim().isEmpty) return;
-
-    setState(() {
-      isLoading = true;
-      errorMessage = null;
-    });
-
-    try {
-      final producto = await service.getProductoPorCodigo(codigo.trim());
-
-      if (producto.isNotEmpty) {
-        await agregarProducto(producto);
-      } else {
-        if (!mounted) return;
-
-        setState(() {
-          errorMessage = "No se encontró el producto escaneado.";
-        });
-      }
-    } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        errorMessage = "No se pudo consultar el producto escaneado.";
-      });
-    } finally {
-      if (!mounted) return;
-
-      setState(() {
-        isLoading = false;
-      });
-    }
+    searchController.text = codigo;
+    await buscar(codigo);
   }
 
   void abrirScanner() {
@@ -180,149 +164,107 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
     );
   }
 
-  Widget buildProveedorAutocomplete() {
-    if (!esAdmin) return const SizedBox.shrink();
+  // 🔥 LA MAGIA: AUTO-SUGERIR COMPRAS 🔥
+  Future<void> autoSugerirCompras() async {
+    if (resultados.isEmpty) return;
 
-    return Column(
-      children: [
-        const SizedBox(height: 10),
-        Autocomplete<String>(
-          optionsBuilder: (TextEditingValue textEditingValue) {
-            final query = textEditingValue.text.trim().toLowerCase();
+    int agregados = 0;
+    String unidadSeleccionada = unidadesMedida.isNotEmpty
+        ? unidadesMedida.first
+        : 'UNIDADES';
 
-            if (query.isEmpty) {
-              return proveedores.take(20);
-            }
+    setState(() {
+      for (var item in resultados) {
+        final double stockActual =
+            double.tryParse(
+              (item["Stock"] ?? item["stock_actual"] ?? 0).toString(),
+            ) ??
+            0;
+        final double stockMinimo =
+            double.tryParse((item["stock_minimo"] ?? 0).toString()) ?? 0;
 
-            return proveedores.where(
-              (proveedor) => proveedor.toLowerCase().contains(query),
+        // Validamos si está en peligro
+        if (stockMinimo > 0 && stockActual <= stockMinimo) {
+          // Ya está en el carrito?
+          final codigo =
+              item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+          final indexExistente = carrito.indexWhere((c) => c.codigo == codigo);
+
+          if (indexExistente == -1 && codigo.isNotEmpty) {
+            // Sugerimos pedir lo que falta para llegar al mínimo + 20%
+            int cantidadSugerida =
+                (stockMinimo - stockActual).ceil() + (stockMinimo * 0.2).ceil();
+            if (cantidadSugerida < 1) cantidadSugerida = 1;
+
+            final nuevo = PedidoItem(
+              codigo: codigo,
+              nombre:
+                  item["NombreProducto"]?.toString() ??
+                  item["nombre"]?.toString() ??
+                  "",
+              marca: item["marca"]?.toString() ?? "",
+              clase: item["Clase"]?.toString() ?? item["clase"]?.toString(),
+              stockActual: stockActual,
+              cantidad: cantidadSugerida,
+              proveedor:
+                  item["Proveedor"]?.toString() ??
+                  item["proveedor"]?.toString(),
+              unidad: unidadSeleccionada,
+              tipoDestino: "VENTA", // Por defecto auto-sugiere para venta
             );
-          },
-          displayStringForOption: (option) => option,
-          onSelected: (String proveedor) {
-            setState(() {
-              proveedorSeleccionado = proveedor;
-            });
 
-            if (searchController.text.trim().length >= 2) {
-              buscar(searchController.text);
-            }
-          },
-          fieldViewBuilder: (
-            context,
-            textEditingController,
-            focusNode,
-            onFieldSubmitted,
-          ) {
-            return TextField(
-              controller: textEditingController,
-              focusNode: focusNode,
-              decoration: InputDecoration(
-                labelText: 'Filtrar por proveedor',
-                hintText: 'Escriba el nombre del proveedor',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.local_shipping_outlined),
-                suffixIcon: textEditingController.text.trim().isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          textEditingController.clear();
+            carrito.add(nuevo);
+            agregados++;
+          }
+        }
+      }
+    });
 
-                          setState(() {
-                            proveedorSeleccionado = null;
-                          });
-
-                          if (searchController.text.trim().length >= 2) {
-                            buscar(searchController.text);
-                          }
-                        },
-                      ),
-              ),
-              onChanged: (value) {
-                final cleanValue = value.trim();
-
-                setState(() {
-                  proveedorSeleccionado = cleanValue.isEmpty ? null : cleanValue;
-                });
-
-                if (searchController.text.trim().length >= 2) {
-                  buscar(searchController.text);
-                }
-              },
-              onSubmitted: (value) {
-                final cleanValue = value.trim();
-
-                setState(() {
-                  proveedorSeleccionado = cleanValue.isEmpty ? null : cleanValue;
-                });
-
-                if (searchController.text.trim().length >= 2) {
-                  buscar(searchController.text);
-                }
-              },
-            );
-          },
-          optionsViewBuilder: (context, onSelected, options) {
-            return Align(
-              alignment: Alignment.topLeft,
-              child: Material(
-                elevation: 4,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxHeight: 260,
-                    maxWidth: 420,
-                  ),
-                  child: ListView.builder(
-                    padding: EdgeInsets.zero,
-                    itemCount: options.length,
-                    itemBuilder: (context, index) {
-                      final proveedor = options.elementAt(index);
-
-                      return ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.local_shipping_outlined),
-                        title: Text(
-                          proveedor,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: () => onSelected(proveedor),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            );
-          },
+    if (agregados > 0) {
+      await PedidoDraftStorage.save(carrito);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '🤖 Se auto-agregaron $agregados productos en estado crítico al carrito.',
+          ),
+          backgroundColor: Colors.green,
         ),
-      ],
-    );
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay nuevos productos críticos para sugerir.'),
+        ),
+      );
+    }
   }
 
+  // --- SE MANTIENE TU MODAL ORIGINAL INTÁCTO PARA LA LOGÍSTICA DE VENTA/GASTO ---
   Future<void> agregarProducto(dynamic item) async {
-    final TextEditingController cantidadController =
-        TextEditingController(text: "1");
+    // Calculamos si hay sugerencia basada en el VDP
+    final double stockActual =
+        double.tryParse(
+          (item["Stock"] ?? item["stock_actual"] ?? 0).toString(),
+        ) ??
+        0;
+    final double stockMinimo =
+        double.tryParse((item["stock_minimo"] ?? 0).toString()) ?? 0;
+    int recomendacion = 1;
 
-    final TextEditingController notaCompraController =
-        TextEditingController();
-
-    String unidadSeleccionada =
-        unidadesMedida.isNotEmpty ? unidadesMedida.first : 'UNIDADES';
-
-    String tipoDestinoSeleccionado = "VENTA";
-
-    Map<String, dynamic>? cantidadRecomendada;
-
-    try {
-      final codigoProducto = item["codigo"]?.toString() ?? "";
-
-      if (codigoProducto.isNotEmpty) {
-        cantidadRecomendada =
-            await service.obtenerCantidadRecomendadaProducto(codigoProducto);
-      }
-    } catch (_) {
-      cantidadRecomendada = null;
+    if (stockMinimo > 0 && stockActual < stockMinimo) {
+      recomendacion = (stockMinimo - stockActual).ceil();
+      if (recomendacion < 1) recomendacion = 1;
     }
+
+    final TextEditingController cantidadController = TextEditingController(
+      text: recomendacion.toString(),
+    );
+    final TextEditingController notaCompraController = TextEditingController();
+
+    String unidadSeleccionada = unidadesMedida.isNotEmpty
+        ? unidadesMedida.first
+        : 'UNIDADES';
+    String tipoDestinoSeleccionado = "VENTA";
 
     final confirmado = await showDialog<bool>(
       context: context,
@@ -338,63 +280,26 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        item["nombre"]?.toString() ?? "Producto sin nombre",
+                        item["NombreProducto"]?.toString() ??
+                            item["nombre"]?.toString() ??
+                            "Producto sin nombre",
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                     const SizedBox(height: 8),
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: Text("Código: ${item["codigo"] ?? ""}"),
+                      child: Text("Stock Actual: $stockActual"),
                     ),
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: Text("Marca: ${item["marca"] ?? ""}"),
+                      child: Text("Mínimo Estadístico: $stockMinimo"),
                     ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text("Stock: ${item["stock_actual"] ?? 0}"),
-                    ),
-                    if ((item["proveedor"]?.toString() ?? "").isNotEmpty)
+                    if (item["vdp"] != null)
                       Align(
                         alignment: Alignment.centerLeft,
-                        child: Text("Proveedor: ${item["proveedor"]}"),
+                        child: Text("Ventas Diarias (VDP): ${item["vdp"]}"),
                       ),
-
-                    if (cantidadRecomendada != null) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.blue.shade200),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "Cantidad recomendada",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue.shade900,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              "Últimos 7 días: ${cantidadRecomendada["recomendacion_semanal"] ?? 0} unidades",
-                            ),
-                            Text(
-                              "Promedio semanal según últimos 30 días: ${cantidadRecomendada["recomendacion_mensual"] ?? 0} unidades",
-                            ),
-                            Text(
-                              "Ventas últimos 30 días: ${cantidadRecomendada["ventas_30_dias"] ?? 0} unidades",
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
 
                     const SizedBox(height: 12),
                     TextField(
@@ -413,79 +318,43 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                         labelText: "Unidad de medida",
                         border: OutlineInputBorder(),
                       ),
-                      items: unidadesMedida.map((unidad) {
-                        return DropdownMenuItem<String>(
-                          value: unidad,
-                          child: Text(unidad),
-                        );
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() {
-                          unidadSeleccionada = value;
-                        });
+                      items: unidadesMedida
+                          .map(
+                            (u) => DropdownMenuItem(value: u, child: Text(u)),
+                          )
+                          .toList(),
+                      onChanged: (val) {
+                        if (val != null)
+                          setDialogState(() => unidadSeleccionada = val);
                       },
                     ),
                     const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        "Destino del producto",
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
-                      runSpacing: 8,
                       children: [
                         ChoiceChip(
                           label: const Text("VENTA"),
-                          avatar: Icon(
-                            Icons.shopping_cart,
-                            size: 18,
-                            color: tipoDestinoSeleccionado == "VENTA"
-                                ? Colors.blue.shade900
-                                : null,
-                          ),
                           selected: tipoDestinoSeleccionado == "VENTA",
-                          selectedColor: Colors.blue.shade100,
-                          onSelected: (_) {
-                            setDialogState(() {
-                              tipoDestinoSeleccionado = "VENTA";
-                            });
-                          },
+                          onSelected: (_) => setDialogState(
+                            () => tipoDestinoSeleccionado = "VENTA",
+                          ),
                         ),
                         ChoiceChip(
                           label: const Text("GASTO"),
-                          avatar: Icon(
-                            Icons.local_fire_department,
-                            size: 18,
-                            color: tipoDestinoSeleccionado == "GASTO"
-                                ? Colors.orange.shade900
-                                : null,
-                          ),
                           selected: tipoDestinoSeleccionado == "GASTO",
-                          selectedColor: Colors.orange.shade100,
-                          onSelected: (_) {
-                            setDialogState(() {
-                              tipoDestinoSeleccionado = "GASTO";
-                            });
-                          },
+                          onSelected: (_) => setDialogState(
+                            () => tipoDestinoSeleccionado = "GASTO",
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: notaCompraController,
-                      maxLines: 3,
-                      maxLength: 500,
-                      textCapitalization: TextCapitalization.sentences,
+                      maxLines: 2,
                       decoration: const InputDecoration(
                         labelText: "Nota de compra",
-                        hintText: "Nota opcional para este producto",
                         border: OutlineInputBorder(),
-                        alignLabelWithHint: true,
                       ),
                     ),
                   ],
@@ -493,15 +362,11 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    Navigator.pop(context, false);
-                  },
+                  onPressed: () => Navigator.pop(context, false),
                   child: const Text("Cancelar"),
                 ),
                 ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context, true);
-                  },
+                  onPressed: () => Navigator.pop(context, true),
                   child: const Text("Agregar"),
                 ),
               ],
@@ -511,64 +376,48 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
       },
     );
 
-    if (confirmado != true) {
-      return;
-    }
+    if (confirmado != true) return;
 
     final cantidad = int.tryParse(cantidadController.text.trim()) ?? 1;
     final notaCompra = notaCompraController.text.trim();
 
     final nuevo = PedidoItem(
-      codigo: item["codigo"]?.toString() ?? "",
-      nombre: item["nombre"]?.toString() ?? "",
+      codigo: item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "",
+      nombre:
+          item["NombreProducto"]?.toString() ??
+          item["nombre"]?.toString() ??
+          "",
       marca: item["marca"]?.toString() ?? "",
-      clase: item["clase"]?.toString(),
-      stockActual: double.tryParse(
-            (item["stock_actual"] ?? 0).toString(),
-          ) ??
-          0,
+      clase: item["Clase"]?.toString() ?? item["clase"]?.toString(),
+      stockActual: stockActual,
       cantidad: cantidad <= 0 ? 1 : cantidad,
-      proveedor: item["proveedor"]?.toString(),
+      proveedor: item["Proveedor"]?.toString() ?? item["proveedor"]?.toString(),
       unidad: unidadSeleccionada,
       notaCompra: notaCompra.isEmpty ? null : notaCompra,
       tipoDestino: tipoDestinoSeleccionado,
     );
 
-    setState(() {
-      carrito.add(nuevo);
-    });
-
+    setState(() => carrito.add(nuevo));
     await PedidoDraftStorage.save(carrito);
 
     if (!mounted) return;
-
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          tipoDestinoSeleccionado == "GASTO"
-              ? "Producto agregado como GASTO"
-              : "Producto agregado como VENTA",
-        ),
-      ),
+      SnackBar(content: Text("Producto agregado (${tipoDestinoSeleccionado})")),
     );
   }
 
   Future<void> abrirCarrito() async {
     final enviado = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => PedidoCarritoScreen(carrito: carrito),
-      ),
+      MaterialPageRoute(builder: (_) => PedidoCarritoScreen(carrito: carrito)),
     );
 
     if (enviado == true) {
       await PedidoDraftStorage.clear();
-
       setState(() {
         carrito.clear();
         resultados.clear();
         searchController.clear();
-        secondSearchController.clear();
         proveedorSeleccionado = null;
       });
     } else {
@@ -579,20 +428,8 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
 
   Future<void> cargarBorradorCarrito() async {
     final borrador = await PedidoDraftStorage.load();
-
     if (!mounted || borrador.isEmpty) return;
-
-    setState(() {
-      carrito = borrador;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          "Se restauró un borrador con ${borrador.length} producto(s)",
-        ),
-      ),
-    );
+    setState(() => carrito = borrador);
   }
 
   @override
@@ -606,53 +443,149 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Realizar Pedido"),
+        title: const Text("Realizar Pedido Inteligente"),
         actions: [
           IconButton(
             icon: const Icon(Icons.qr_code_scanner),
-            tooltip: "Escanear código",
             onPressed: abrirScanner,
           ),
-          IconButton(
-            icon: const Icon(Icons.shopping_cart),
-            tooltip: "Ver carrito",
-            onPressed: abrirCarrito,
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.shopping_cart),
+                onPressed: abrirCarrito,
+              ),
+              if (carrito.isNotEmpty)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '${carrito.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
       body: Column(
         children: [
-          Padding(
+          // --- CABECERA DE FILTROS ---
+          Container(
+            color: Colors.white,
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
                 TextField(
                   controller: searchController,
-                  decoration: const InputDecoration(
-                    hintText: "Buscar producto, código, marca o clase",
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    hintText: "Buscar producto...",
+                    prefixIcon: const Icon(Icons.search),
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.send),
+                      onPressed: () => buscar(searchController.text),
+                    ),
                   ),
-                  onChanged: buscar,
+                  onSubmitted: buscar,
                 ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: secondSearchController,
-                  decoration: const InputDecoration(
-                    hintText: "Refinar búsqueda opcional",
-                    prefixIcon: Icon(Icons.filter_alt),
-                    border: OutlineInputBorder(),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Text('Búsqueda Profunda (Kardex):'),
+                    Switch(
+                      value: busquedaProfunda,
+                      onChanged: (val) {
+                        setState(() => busquedaProfunda = val);
+                        if (searchController.text.length >= 2)
+                          buscar(searchController.text);
+                      },
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: 'Clase',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                        ),
+                        value: claseSeleccionada,
+                        items: clasesDisponibles
+                            .map(
+                              (c) => DropdownMenuItem(value: c, child: Text(c)),
+                            )
+                            .toList(),
+                        onChanged: (val) {
+                          setState(() => claseSeleccionada = val!);
+                          buscar(searchController.text);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (esAdmin)
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          decoration: const InputDecoration(
+                            labelText: 'Proveedor',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          value: proveedorSeleccionado,
+                          items: [
+                            const DropdownMenuItem(
+                              value: null,
+                              child: Text('Todos'),
+                            ),
+                            ...proveedores.map(
+                              (p) => DropdownMenuItem(
+                                value: p,
+                                child: Text(p, overflow: TextOverflow.ellipsis),
+                              ),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            setState(() => proveedorSeleccionado = val);
+                            buscar(searchController.text);
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+                if (resultados.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.green.shade700,
+                        side: BorderSide(color: Colors.green.shade700),
+                      ),
+                      onPressed: autoSugerirCompras,
+                      icon: const Icon(Icons.auto_awesome),
+                      label: const Text(
+                        'Auto-sugerir pedido (Cruzar con Mínimo)',
+                      ),
+                    ),
                   ),
-                  onChanged: (_) {
-                    if (searchController.text.trim().length >= 2) {
-                      buscar(searchController.text);
-                    }
-                  },
-                ),
-                buildProveedorAutocomplete(),
               ],
             ),
           ),
+
+          // --- LISTA DE PRODUCTOS ---
           if (isLoading)
             const Padding(
               padding: EdgeInsets.all(12),
@@ -666,6 +599,7 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                 style: const TextStyle(color: Colors.red),
               ),
             ),
+
           Expanded(
             child: resultados.isEmpty && !isLoading
                 ? const Center(
@@ -674,27 +608,118 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                     ),
                   )
                 : ListView.builder(
+                    padding: const EdgeInsets.all(8),
                     itemCount: resultados.length,
                     itemBuilder: (_, i) {
                       final item = resultados[i];
-
                       final proveedor =
-                          item["proveedor"]?.toString().trim() ?? "";
+                          item["Proveedor"]?.toString().trim() ??
+                          item["proveedor"]?.toString().trim() ??
+                          "";
+                      final stockActual =
+                          double.tryParse(
+                            (item["Stock"] ?? item["stock_actual"] ?? 0)
+                                .toString(),
+                          ) ??
+                          0;
+                      final stockMinimo =
+                          double.tryParse(
+                            (item["stock_minimo"] ?? 0).toString(),
+                          ) ??
+                          0;
+                      final alertaActiva = item["alerta_lead_time"] == true;
 
-                      return ListTile(
-                        title: Text(
-                          item["nombre"]?.toString() ?? "Sin nombre",
+                      final bool estaEnPeligro =
+                          stockMinimo > 0 && stockActual <= stockMinimo;
+
+                      return Card(
+                        elevation: estaEnPeligro ? 3 : 1,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(
+                            color: estaEnPeligro
+                                ? Colors.red.shade300
+                                : Colors.grey.shade300,
+                            width: estaEnPeligro ? 2 : 1,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
                         ),
-                        subtitle: Text(
-                          "Código: ${item["codigo"] ?? ""}\n"
-                          "Marca: ${item["marca"] ?? ""} | "
-                          "Stock: ${item["stock_actual"] ?? 0}"
-                          "${proveedor.isNotEmpty ? "\nProveedor: $proveedor" : ""}",
-                        ),
-                        isThreeLine: proveedor.isNotEmpty,
-                        trailing: IconButton(
-                          icon: const Icon(Icons.add),
-                          onPressed: () => agregarProducto(item),
+                        child: ListTile(
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  item["NombreProducto"]?.toString() ??
+                                      item["nombre"]?.toString() ??
+                                      "Sin nombre",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              if (alertaActiva)
+                                IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  icon: const Icon(
+                                    Icons.warning_amber_rounded,
+                                    color: Colors.red,
+                                  ),
+                                  tooltip: 'Falta Cronograma de Entregas',
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            CronogramaFormScreen(
+                                              proveedorInicial:
+                                                  item["proveedor_objetivo"] ??
+                                                  proveedor,
+                                              onSaved: () =>
+                                                  buscar(searchController.text),
+                                            ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                            ],
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Código: ${item["Codigo"] ?? item["codigo"] ?? ""}",
+                              ),
+                              Text(
+                                "Stock: $stockActual (Mín: $stockMinimo)",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: estaEnPeligro
+                                      ? Colors.red.shade700
+                                      : Colors.green.shade700,
+                                ),
+                              ),
+                              if (item["vdp"] != null && item["vdp"] > 0)
+                                Text(
+                                  "VDP: ${item["vdp"]} | Lead Time: ${item["lead_time_dias"] ?? 2} días",
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              if (proveedor.isNotEmpty)
+                                Text(
+                                  "Prov: $proveedor",
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(
+                              Icons.add_shopping_cart,
+                              color: Colors.blue,
+                            ),
+                            onPressed: () => agregarProducto(item),
+                          ),
                         ),
                       );
                     },

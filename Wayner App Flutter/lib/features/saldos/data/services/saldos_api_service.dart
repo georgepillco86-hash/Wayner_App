@@ -25,7 +25,45 @@ class SaldosApiService {
     return null;
   }
 
-  // 🔥 1. EL CAMBIO MAESTRO: Redirigimos la búsqueda principal al motor Predictivo
+  // =====================================================================
+  // 🔥 MÉTODOS NUEVOS PARA "REALIZAR PEDIDO INTELIGENTE" 🔥
+  // =====================================================================
+
+  Future<List<dynamic>> buscarRapido({
+    required String termino,
+    String? clase,
+    String? proveedor,
+  }) async {
+    try {
+      final params = <String, dynamic>{'q': termino};
+
+      if (clase != null && clase.isNotEmpty) params['clase'] = clase;
+      if (proveedor != null && proveedor.isNotEmpty)
+        params['proveedor'] = proveedor;
+
+      final response = await _apiClient.get(
+        '/api/proveedores/buscar-rapido',
+        queryParameters: params,
+      );
+
+      if (response is List) return response;
+      if (response is Map && response.containsKey('data'))
+        return response['data'];
+      return [];
+    } catch (e) {
+      print("❌ ERROR EN BUSCAR RAPIDO (CARRITO): $e");
+      return [];
+    }
+  }
+
+  Future<List<dynamic>> buscarEnKardex(String termino) async {
+    return busquedaProfundaKardex(termino);
+  }
+
+  // =====================================================================
+  // MÉTODOS ORIGINALES (No se modificaron para proteger la app)
+  // =====================================================================
+
   Future<List<ProductBalance>> searchProducts({
     required String text,
     String? clase,
@@ -36,10 +74,10 @@ class SaldosApiService {
       final params = <String, dynamic>{'q': text};
 
       if (clase != null && clase.isNotEmpty) params['clase'] = clase;
-      if (proveedor != null && proveedor.isNotEmpty)
+      if (proveedor != null && proveedor.isNotEmpty) {
         params['proveedor'] = proveedor;
+      }
 
-      // ¡AQUÍ ESTÁ LA MAGIA! Apuntamos a la ruta rápida e inteligente
       final response = await _apiClient.get(
         '/api/proveedores/buscar-rapido',
         queryParameters: params,
@@ -62,7 +100,6 @@ class SaldosApiService {
     }
   }
 
-  // 🔥 2. Redirigimos Dataset para que también traiga el VDP al abrir la pantalla
   Future<List<ProductBalance>> getDataset({
     int limit = 50,
     String? proveedor,
@@ -70,7 +107,6 @@ class SaldosApiService {
     return searchProducts(text: '', proveedor: proveedor, limit: limit);
   }
 
-  // 🔥 3. Redirigimos la búsqueda por clase para que traiga el VDP
   Future<List<ProductBalance>> getProductsByClass(
     String clase, {
     int limit = 50,
