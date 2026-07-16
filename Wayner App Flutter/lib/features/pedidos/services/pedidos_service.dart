@@ -11,22 +11,16 @@ class PedidosService {
     String? query2,
     String? proveedor,
   }) async {
-    final uri = Uri.parse(
-      "$baseUrl/productos/buscar",
-    ).replace(
+    final uri = Uri.parse("$baseUrl/productos/buscar").replace(
       queryParameters: {
         "q": query,
-        if (query2 != null && query2.trim().isNotEmpty)
-          "q2": query2.trim(),
+        if (query2 != null && query2.trim().isNotEmpty) "q2": query2.trim(),
         if (proveedor != null && proveedor.trim().isNotEmpty)
           "proveedor": proveedor.trim(),
       },
     );
 
-    final response = await http.get(
-      uri,
-      headers: await AuthHeaders.plain(),
-    );
+    final response = await http.get(uri, headers: await AuthHeaders.plain());
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body)["data"];
@@ -35,20 +29,29 @@ class PedidosService {
     }
   }
 
+  // 🔥 CORRECCIÓN: Apuntamos a la ruta optimizada que liberamos en Python 🔥
   Future<List<String>> obtenerProveedores() async {
     final response = await http.get(
-      Uri.parse("${ApiConfig.baseUrl}/api/saldos/proveedores"),
+      Uri.parse("${ApiConfig.baseUrl}/api/proveedores/"),
       headers: await AuthHeaders.plain(),
     );
 
     if (response.statusCode == 200) {
-      final json = jsonDecode(response.body);
-      final data = json["data"] ?? [];
+      final decoded = jsonDecode(response.body);
 
-      return data
-          .map<String>((item) => item["proveedor"]?.toString() ?? "")
-          .where((item) => item.trim().isNotEmpty)
-          .toList();
+      // La nueva ruta devuelve directamente una lista: ["Prov1", "Prov2"]
+      if (decoded is List) {
+        return decoded.map<String>((item) => item.toString()).toList();
+      }
+      // Fallback de seguridad por si alguna vez devuelve el formato antiguo
+      else if (decoded is Map && decoded.containsKey('data')) {
+        final data = decoded["data"] ?? [];
+        return data
+            .map<String>((item) => item["proveedor"]?.toString() ?? "")
+            .where((item) => item.trim().isNotEmpty)
+            .toList();
+      }
+      return [];
     }
 
     throw Exception("Error al obtener proveedores");
@@ -59,7 +62,9 @@ class PedidosService {
     int meses = 6,
   }) async {
     final response = await http.get(
-      Uri.parse("$baseUrl/productos/$codigoProducto/mejor-proveedor-precio?meses=$meses"),
+      Uri.parse(
+        "$baseUrl/productos/$codigoProducto/mejor-proveedor-precio?meses=$meses",
+      ),
       headers: await AuthHeaders.plain(),
     );
 
@@ -226,9 +231,7 @@ class PedidosService {
     final response = await http.patch(
       Uri.parse("$baseUrl/$pedidoId/items/$itemId"),
       headers: await AuthHeaders.json(),
-      body: jsonEncode({
-        "cantidad_pedida": cantidad,
-      }),
+      body: jsonEncode({"cantidad_pedida": cantidad}),
     );
 
     if (response.statusCode == 200) {
@@ -264,9 +267,7 @@ class PedidosService {
     final response = await http.patch(
       Uri.parse("$baseUrl/$pedidoId/items/$itemId/proveedor"),
       headers: await AuthHeaders.json(),
-      body: jsonEncode({
-        "proveedor": proveedor,
-      }),
+      body: jsonEncode({"proveedor": proveedor}),
     );
 
     if (response.statusCode == 200) {
@@ -285,9 +286,7 @@ class PedidosService {
     final response = await http.patch(
       Uri.parse("$baseUrl/$pedidoId/items/$itemId/nota"),
       headers: await AuthHeaders.json(),
-      body: jsonEncode({
-        "nota_compra": notaCompra,
-      }),
+      body: jsonEncode({"nota_compra": notaCompra}),
     );
 
     if (response.statusCode == 200) {
@@ -306,9 +305,7 @@ class PedidosService {
     final response = await http.patch(
       Uri.parse("$baseUrl/$pedidoId/items/$itemId/unidad"),
       headers: await AuthHeaders.json(),
-      body: jsonEncode({
-        "unidad": unidad,
-      }),
+      body: jsonEncode({"unidad": unidad}),
     );
 
     if (response.statusCode == 200) {
@@ -327,9 +324,7 @@ class PedidosService {
     final response = await http.patch(
       Uri.parse("$baseUrl/$pedidoId/items/$itemId/tipo-destino"),
       headers: await AuthHeaders.json(),
-      body: jsonEncode({
-        "tipo_destino": tipoDestino,
-      }),
+      body: jsonEncode({"tipo_destino": tipoDestino}),
     );
 
     if (response.statusCode == 200) {
@@ -347,9 +342,7 @@ class PedidosService {
     final response = await http.patch(
       Uri.parse("$baseUrl/$pedidoId/estado"),
       headers: await AuthHeaders.json(),
-      body: jsonEncode({
-        "estado": estado,
-      }),
+      body: jsonEncode({"estado": estado}),
     );
 
     if (response.statusCode == 200) {
@@ -421,10 +414,7 @@ class PedidosService {
             "$baseUrl/$pedidoId/novedades-recepcion-texto?proveedor=${Uri.encodeComponent(proveedor)}",
           );
 
-    final response = await http.get(
-      uri,
-      headers: await AuthHeaders.plain(),
-    );
+    final response = await http.get(uri, headers: await AuthHeaders.plain());
 
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body);
@@ -483,9 +473,7 @@ class PedidosService {
     final response = await http.post(
       Uri.parse("${ApiConfig.baseUrl}/api/unidades-medida"),
       headers: await AuthHeaders.json(),
-      body: jsonEncode({
-        "nombre": nombre,
-      }),
+      body: jsonEncode({"nombre": nombre}),
     );
 
     if (response.statusCode == 200) {
@@ -504,10 +492,7 @@ class PedidosService {
     final response = await http.patch(
       Uri.parse("${ApiConfig.baseUrl}/api/unidades-medida/$unidadId"),
       headers: await AuthHeaders.json(),
-      body: jsonEncode({
-        "nombre": nombre,
-        "activo": activo,
-      }),
+      body: jsonEncode({"nombre": nombre, "activo": activo}),
     );
 
     if (response.statusCode == 200) {

@@ -235,4 +235,15 @@ class SaldosApiService {
       return [];
     }
   }
+
+  // 🔥 NUEVO: Método para obtener TODAS las marcas globales desde MySQL 🔥
+  Future<List<String>> obtenerMarcasGlobales() async {
+    try {
+      final response = await _apiClient.get('/api/proveedores/marcas');
+      if (response is List) return response.map((e) => e.toString()).toList();
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
 }

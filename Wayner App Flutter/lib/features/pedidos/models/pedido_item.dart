@@ -9,7 +9,8 @@ class PedidoItem {
   bool seleccionado;
 
   final String? proveedor;
-  final String? notaCompra;
+  String?
+  notaCompra; // 🔥 CORREGIDO: Se quitó el 'final' para permitir reescribir notas
 
   String? unidad;
   String tipoDestino;
