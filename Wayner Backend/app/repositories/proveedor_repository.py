@@ -35,6 +35,20 @@ class ProveedorRepository:
         except Exception as e:
             print("❌ ERROR OBTENIENDO CLASES:", e)
             return []
+    
+    def get_marcas_list(self) -> list[str]:
+        query = """
+        SELECT DISTINCT marca 
+        FROM p_proveedores.catalogo_proveedores 
+        WHERE marca IS NOT NULL AND TRIM(marca) != ''
+        ORDER BY marca;
+        """
+        try:
+            results = pedidos_db.fetch_all(query)
+            return [row["marca"] for row in results]
+        except Exception as e:
+            print("❌ ERROR OBTENIENDO MARCAS:", e)
+            return []
         
     def get_productos_por_proveedor(self, nombre_proveedor: str) -> List[dict]:
         query = """
@@ -82,7 +96,7 @@ class ProveedorRepository:
             tiempos_bd = pedidos_db.fetch_all(query_tiempos)
             tiempos_map = {row["proveedor"]: int(row["lead_time_calculado"]) for row in tiempos_bd} if tiempos_bd else {}
 
-            # ---> CORRECCIÓN: Eliminamos el filtro de 1 año aquí también
+            # ---> CORRECCIÓN: Eliminamos el filtro de 1 año aquí también para encontrar productos viejos
             query_pg = """
             SELECT codigo, codigo_barra, nombre_producto, proveedor, clase 
             FROM p_proveedores.catalogo_proveedores
@@ -96,13 +110,14 @@ class ProveedorRepository:
                 query_pg += " AND (nombre_producto ILIKE %s OR codigo ILIKE %s OR codigo_barra ILIKE %s)"
                 params_pg.extend([termino_sql, termino_sql, termino_sql])
                 
+            # 🔥 CORRECCIÓN: Uso de ILIKE para que el filtro coincida con fragmentos de texto
             if proveedor_especifico:
-                query_pg += " AND proveedor = %s"
-                params_pg.append(proveedor_especifico)
+                query_pg += " AND proveedor ILIKE %s"
+                params_pg.append(f"%{proveedor_especifico.strip()}%")
                 
             if clase_especifica:
-                query_pg += " AND clase = %s"
-                params_pg.append(clase_especifica)
+                query_pg += " AND clase ILIKE %s"
+                params_pg.append(f"%{clase_especifica.strip()}%")
                 
             if (proveedor_especifico or clase_especifica) and not termino:
                 pass 
@@ -119,8 +134,6 @@ class ProveedorRepository:
             codigos = [str(row["codigo"]).strip() for row in resultados_pg if row.get("codigo")]
             if not codigos:
                 return []
-
-            # ... (El resto de la función hacia abajo queda exactamente igual, con tu consulta MySQL de marcas y el cruce del VDP) ...
 
             datos_vivos = {}
             lote_size = 100

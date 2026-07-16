@@ -102,7 +102,7 @@ class PedidoService:
             if "Min" in item: item["Min"] = stock_minimo_calc
 
             if not primer_log:
-                logger.info(f"[PEDIDO_SERVICE] OK! Ej: Codigo {codigo} | vdp={item['vdp']} | min={item['Min']}")
+                logger.info(f"[PEDIDO_SERVICE] OK! Ej: Codigo {codigo} | vdp={item.get('vdp', 0)} | min={item.get('Min', 0)}")
                 primer_log = True
 
         return items[0] if is_dict else items

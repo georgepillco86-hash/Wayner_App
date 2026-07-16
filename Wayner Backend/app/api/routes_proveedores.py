@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from typing import Optional
 
 from app.repositories.proveedor_repository import ProveedorRepository
@@ -21,6 +21,10 @@ async def listar_proveedores():
 @router.get("/clases")
 async def listar_clases():
     return proveedor_repo.get_clases_list()
+
+@router.get("/marcas", response_model=list[str])
+def listar_marcas(repo: ProveedorRepository = Depends()):
+    return repo.get_marcas_list()
 
 @router.get("/{nombre_proveedor}/productos")
 async def listar_productos_proveedor(nombre_proveedor: str):
