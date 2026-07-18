@@ -258,17 +258,33 @@ class PedidoRepository:
     def list_orders(self, limit: int = 50) -> list[dict[str, Any]]:
         query = """
         SELECT
-            id,
-            codigo_pedido,
-            estado,
-            usuario_creacion AS usuario,
-            observacion,
-            fecha_creacion,
-            fecha_envio,
-            fecha_recepcion,
-            NULL AS fecha_actualizacion
-        FROM pedidos
-        ORDER BY fecha_creacion DESC
+            p.id,
+            p.codigo_pedido,
+            p.estado,
+            p.usuario_creacion AS usuario,
+            p.usuario_creacion AS usuario_nombre,
+            p.observacion,
+            p.fecha_creacion,
+            p.fecha_envio,
+            p.fecha_recepcion,
+            NULL AS fecha_actualizacion,
+            COUNT(pi.id) AS total_items,
+            STRING_AGG(DISTINCT pr.nombre, ', ') AS proveedores
+        FROM pedidos p
+        LEFT JOIN pedido_items pi
+            ON pi.pedido_id = p.id
+        LEFT JOIN proveedores pr 
+            ON pr.id = pi.proveedor_id
+        GROUP BY
+            p.id,
+            p.codigo_pedido,
+            p.estado,
+            p.usuario_creacion,
+            p.observacion,
+            p.fecha_creacion,
+            p.fecha_envio,
+            p.fecha_recepcion
+        ORDER BY p.fecha_creacion DESC
         LIMIT %s
         """
 
@@ -368,15 +384,19 @@ class PedidoRepository:
             p.codigo_pedido,
             p.estado,
             p.usuario_creacion AS usuario,
+            p.usuario_creacion AS usuario_nombre,
             p.observacion,
             p.fecha_creacion,
             p.fecha_envio,
             p.fecha_recepcion,
             NULL AS fecha_actualizacion,
-            COUNT(pi.id) AS total_items
+            COUNT(pi.id) AS total_items,
+            STRING_AGG(DISTINCT pr.nombre, ', ') AS proveedores
         FROM pedidos p
         LEFT JOIN pedido_items pi
             ON pi.pedido_id = p.id
+        LEFT JOIN proveedores pr 
+            ON pr.id = pi.proveedor_id
         WHERE LOWER(p.usuario_creacion) = LOWER(%s)
         GROUP BY
             p.id,
@@ -449,14 +469,18 @@ class PedidoRepository:
             p.codigo_pedido,
             p.estado,
             p.usuario_creacion AS usuario,
+            p.usuario_creacion AS usuario_nombre,
             p.observacion,
             p.fecha_creacion,
             p.fecha_envio,
             p.fecha_recepcion,
-            COUNT(pi.id) AS total_items
+            COUNT(pi.id) AS total_items,
+            STRING_AGG(DISTINCT pr.nombre, ', ') AS proveedores
         FROM pedidos p
         LEFT JOIN pedido_items pi
             ON pi.pedido_id = p.id
+        LEFT JOIN proveedores pr 
+            ON pr.id = pi.proveedor_id
         GROUP BY
             p.id,
             p.codigo_pedido,
@@ -836,11 +860,13 @@ class PedidoRepository:
             p.codigo_pedido,
             p.estado,
             p.usuario_creacion AS usuario,
+            p.usuario_creacion AS usuario_nombre,
             p.observacion,
             p.fecha_creacion,
             p.fecha_envio,
             p.fecha_recepcion,
             COUNT(pi.id) AS total_items,
+            STRING_AGG(DISTINCT pr.nombre, ', ') AS proveedores,
             SUM(
                 CASE
                     WHEN pi.recibido = true THEN 1
@@ -857,6 +883,8 @@ class PedidoRepository:
         FROM pedidos p
         LEFT JOIN pedido_items pi
             ON pi.pedido_id = p.id
+        LEFT JOIN proveedores pr 
+            ON pr.id = pi.proveedor_id
         WHERE p.estado IN ('ENVIADO', 'RECIBIDO')
         GROUP BY
             p.id,
@@ -1039,3 +1067,72 @@ class PedidoRepository:
             "recomendacion_semanal": recomendacion_semanal,
             "recomendacion_mensual": recomendacion_mensual,
         }
+
+    # 🔥 NUEVO: Función para histórico de ventas de N días
+    def get_ventas_historicas_totales(self, codigo: str, dias: int) -> float:
+        query = """
+        SELECT CAST(SUM(IFNULL(Egreso, 0)) AS DECIMAL(18,3)) AS total_ventas
+        FROM v_kardexproductos
+        WHERE (Codigo = %s OR CodigoBarra = %s)
+          AND Fecha BETWEEN DATE_SUB(CURDATE(), INTERVAL %s DAY) AND CURDATE()
+        """
+        data = db.fetch_one(query, (codigo, codigo, dias))
+        return float(data.get("total_ventas") or 0) if data else 0.0
+
+    # 🔥 NUEVO: Función para obtener el costo más bajo 
+    def get_lowest_cost_provider(self, codigo: str, proveedor: str, meses: int = 3) -> dict[str, Any] | None:
+        fecha_desde = self._restar_meses(date.today(), meses)
+        
+        query = """
+        SELECT Costo, IVA
+        FROM v_kardexproductos
+        WHERE (Codigo = %s OR CodigoBarra = %s)
+          AND LOWER(TRIM(NombreProveedor)) = LOWER(TRIM(%s))
+          AND Fecha >= %s
+          AND Costo IS NOT NULL AND Costo > 0
+        ORDER BY Costo ASC
+        LIMIT 1
+        """
+        
+        row = db.fetch_one(query, (codigo, codigo, proveedor, fecha_desde))
+        if row:
+            return {
+                "costo_minimo": float(row["Costo"]),
+                "tiene_iva": str(row["IVA"]).strip().upper() in ["S", "SI", "1", "TRUE", "Y", "YES"]
+            }
+        return None
+
+    # 🔥 NUEVO: Función para historial de costos en N meses
+    def get_cost_history_provider(self, codigo: str, proveedor: str, fecha_inicio: date, fecha_fin: date) -> list[dict[str, Any]]:
+        query = """
+        SELECT Fecha, Costo, IVA, NombreDocumento
+        FROM v_kardexproductos
+        WHERE (Codigo = %s OR CodigoBarra = %s)
+          AND LOWER(TRIM(NombreProveedor)) = LOWER(TRIM(%s))
+          AND Fecha BETWEEN %s AND %s
+          AND Costo IS NOT NULL AND Costo > 0
+        ORDER BY Fecha DESC
+        """
+        
+        rows = db.fetch_all(query, (codigo, codigo, proveedor, fecha_inicio, fecha_fin))
+        
+        resultado = []
+        ultimo_costo = None
+        
+        for row in rows:
+            costo_actual = float(row["Costo"])
+            
+            # Filtrar repetidos o variaciones menores a 2 centavos
+            if ultimo_costo is None or abs(costo_actual - ultimo_costo) >= 0.02:
+                # Aseguramos que la fecha sea serializable para JSON
+                fecha_str = row["Fecha"].isoformat() if isinstance(row["Fecha"], date) else row["Fecha"]
+                
+                resultado.append({
+                    "fecha": fecha_str,
+                    "costo": costo_actual,
+                    "tiene_iva": str(row["IVA"]).strip().upper() in ["S", "SI", "1", "TRUE", "Y", "YES"],
+                    "documento": row["NombreDocumento"]
+                })
+                ultimo_costo = costo_actual
+                
+        return resultado

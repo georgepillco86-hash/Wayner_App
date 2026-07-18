@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Depends
 
 from app.repositories.pedido_repository import PedidoRepository
 from app.schemas.pedido import (
@@ -94,6 +94,18 @@ def get_cantidad_recomendada_producto(codigo: str):
     return ok(
         service.get_cantidad_recomendada_producto(codigo),
         "Cantidad recomendada obtenida exitosamente",
+    )
+
+# 🔥 NUEVO ENDPOINT: Historial de Costos 🔥
+@router.get("/producto/{codigo}/historial-costos")
+def obtener_historial_costos(
+    codigo: str, 
+    proveedor: str = Query(..., min_length=1), 
+    meses: int = Query(default=5, ge=1, le=24),
+):
+    return ok(
+        service.get_historial_costos(codigo, proveedor, meses),
+        "Historial de costos obtenido exitosamente"
     )
 
 @router.get("/productos/{codigo}")

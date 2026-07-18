@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,12 +24,35 @@ from app.services.audit_middleware import AuditLogMiddleware
 from app.services.provider_mirror_service import ProviderMirrorService
 from app.services.notification_service import NotificationService
 
+# 🔥 IMPORTAMOS EL NUEVO SCHEDULER 🔥
+from app.core.scheduler import start_scheduler
+
+# --- CICLO DE VIDA DEL SERVIDOR (LIFESPAN) ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Lógica de ENCENDIDO (Startup)
+    
+    # 1. Inicia el bucle de sincronización de proveedores (Espejo)
+    asyncio.create_task(ProviderMirrorService.iniciar_bucle_sincronizacion())
+    
+    # 2. Inicia el vigilante de notificaciones para los pedidos programados
+    asyncio.create_task(NotificationService.iniciar_vigilante_alertas())
+    
+    # 3. Inicia el motor de tareas en segundo plano (Alertas de Cronograma diarias)
+    start_scheduler()
+    
+    yield  # El servidor está corriendo...
+    
+    # Lógica de APAGADO (Shutdown) iría aquí si fuera necesario liberar recursos
+
+# --- INICIALIZACIÓN DE FASTAPI ---
 app = FastAPI(
     title=settings.app_name,
     version="1.1.0",
     debug=settings.app_debug,
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,  # 🔥 Conectamos el ciclo de vida aquí 🔥
 )
 
 app.add_middleware(
@@ -41,16 +65,7 @@ app.add_middleware(
 
 app.add_middleware(AuditLogMiddleware)
 
-@app.on_event("startup")
-async def startup_event():
-    #await ProviderMirrorService.sincronizar_espejo()
-    # 1. Inicia el bucle de sincronización de proveedores (Espejo)
-    asyncio.create_task(ProviderMirrorService.iniciar_bucle_sincronizacion())
-    
-    # 2. Inicia el vigilante de notificaciones para los pedidos programados
-    asyncio.create_task(NotificationService.iniciar_vigilante_alertas())
-
-
+# --- MANEJO DE EXCEPCIONES ---
 @app.exception_handler(DatabaseConnectionError)
 async def database_error_handler(request: Request, exc: DatabaseConnectionError):
     return JSONResponse(
@@ -72,7 +87,6 @@ async def not_found_handler(request: Request, exc: NotFoundError):
             "error": str(exc),
         },
     )
-
 
 @app.exception_handler(ValidationError)
 async def validation_handler(request: Request, exc: ValidationError):
@@ -99,4 +113,3 @@ app.include_router(mermas_router, prefix=f"{settings.api_prefix}/mermas", tags=[
 # Rutas Nuevas
 app.include_router(proveedores_router, prefix="/api/proveedores", tags=["Proveedores"])
 app.include_router(cronogramas_router, prefix="/api/cronograma", tags=["Cronograma"])
-

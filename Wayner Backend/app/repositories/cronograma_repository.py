@@ -97,3 +97,19 @@ class CronogramaRepository:
             if lead_time is not None:
                 return max(0, int(lead_time))
         return None
+    
+    def marcar_visita_realizada(self, usuario: str, proveedor: str) -> None:
+        """
+        Cambia el estado a 'REALIZADO' solo si el pedido se hace ANTES o el mismo día de la visita.
+        """
+        query = """
+        UPDATE cronograma_visitas
+        SET estado = 'REALIZADO'
+        WHERE LOWER(proveedor) = LOWER(%s)
+          AND LOWER(usuario_responsable) = LOWER(%s)
+          AND estado IN ('PENDIENTE', 'NOTIFICADO')
+          AND fecha_visita >= CURDATE() 
+          AND fecha_visita <= DATE_ADD(CURDATE(), INTERVAL 5 DAY)
+        """
+        from app.core.database import db
+        db.execute(query, (proveedor, usuario))

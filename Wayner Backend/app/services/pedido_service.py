@@ -398,12 +398,32 @@ class PedidoService:
 
             texto = "\n".join(lineas)
 
+            # 🔥 INYECCIÓN DE COSTOS PARA EL FRONTEND 🔥
+            items_enriquecidos = []
+            for item in items:
+                costo_data = self.repository.get_lowest_cost_provider(
+                    codigo=item.get('codigo_producto'), 
+                    proveedor=proveedor_original, 
+                    meses=3
+                )
+                
+                item_dict = dict(item)
+                if costo_data:
+                    item_dict["costo_minimo"] = costo_data["costo_minimo"]
+                    item_dict["tiene_iva"] = costo_data["tiene_iva"]
+                else:
+                    item_dict["costo_minimo"] = None
+                    item_dict["tiene_iva"] = False
+                    
+                items_enriquecidos.append(item_dict)
+
             textos.append({
                 "proveedor": proveedor_original,
                 "texto": texto,
                 "total_items": len(items),
                 "total_venta": len(items_venta),
                 "total_gasto": len(items_gasto),
+                "items_detalle": items_enriquecidos
             })
 
         return {
@@ -948,3 +968,12 @@ class PedidoService:
                 "dias_seguridad": dias_seguridad
             }
         }
+    
+    def get_historial_costos(self, codigo: str, proveedor: str, meses: int = 5) -> list[dict]:
+        codigo = self._validate_text(codigo, "El código")
+        proveedor = self._validate_text(proveedor, "El proveedor")
+        
+        fecha_fin = datetime.now().date()
+        fecha_inicio = self.repository._restar_meses(fecha_fin, meses)
+        
+        return self.repository.get_cost_history_provider(codigo, proveedor, fecha_inicio, fecha_fin)
