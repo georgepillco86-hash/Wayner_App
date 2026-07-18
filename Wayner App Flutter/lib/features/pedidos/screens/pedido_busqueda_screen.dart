@@ -103,7 +103,6 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
   }
 
   Future<void> buscar(String query) async {
-    // Para que no se bloquee si el cuadro está vacío pero hay filtros
     if (query.trim().isEmpty &&
         proveedorSeleccionado == null &&
         claseSeleccionada == 'Todas las clases') {
@@ -196,7 +195,11 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
     setState(() => carrito = borrador);
   }
 
-  void _actualizarCantidad(dynamic item, int delta) {
+  // =========================================================================
+  // 🔥 LÓGICA MATEMÁTICA AVANZADA DE CANTIDADES 🔥
+  // =========================================================================
+
+  void _fijarCantidad(dynamic item, dynamic nuevaCantidad) {
     final codigo =
         item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
     if (codigo.isEmpty) return;
@@ -204,13 +207,14 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
     setState(() {
       final index = carrito.indexWhere((c) => c.codigo == codigo);
       if (index >= 0) {
-        int nueva = carrito[index].cantidad + delta;
-        if (nueva <= 0) {
+        if (nuevaCantidad.toString() == "0" ||
+            nuevaCantidad.toString().isEmpty) {
           carrito.removeAt(index);
         } else {
-          carrito[index].cantidad = nueva;
+          carrito[index].cantidad = nuevaCantidad;
         }
-      } else if (delta > 0) {
+      } else if (nuevaCantidad.toString() != "0" &&
+          nuevaCantidad.toString().isNotEmpty) {
         final nombreCorregido =
             item["Nombre"]?.toString() ??
             item["NombreProducto"]?.toString() ??
@@ -229,7 +233,7 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
             marca: item["Marca"]?.toString() ?? item["marca"]?.toString() ?? "",
             clase: item["Clase"]?.toString() ?? item["clase"]?.toString(),
             stockActual: stockActual,
-            cantidad: delta,
+            cantidad: nuevaCantidad,
             proveedor:
                 item["Proveedor"]?.toString() ?? item["proveedor"]?.toString(),
             unidad: unidadesMedida.isNotEmpty
@@ -243,6 +247,123 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
     PedidoDraftStorage.save(carrito);
   }
 
+  void _actualizarCantidad(dynamic item, int delta) {
+    final codigo =
+        item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+    if (codigo.isEmpty) return;
+
+    setState(() {
+      final index = carrito.indexWhere((c) => c.codigo == codigo);
+      if (index >= 0) {
+        dynamic current = carrito[index].cantidad;
+        double numValue = 0.0;
+
+        // Interpreta el valor actual (si es fracción, lo convierte a decimal temporalmente)
+        if (current is num) {
+          numValue = current.toDouble();
+        } else if (current is String) {
+          if (current.contains('/')) {
+            var parts = current.split('/');
+            if (parts.length == 2) {
+              numValue =
+                  (double.tryParse(parts[0]) ?? 0) /
+                  (double.tryParse(parts[1]) ?? 1);
+            }
+          } else {
+            numValue = double.tryParse(current) ?? 0.0;
+          }
+        }
+
+        numValue += delta;
+
+        if (numValue <= 0) {
+          carrito.removeAt(index);
+        } else {
+          // Si el resultado es exacto (.0), lo guarda sin decimales
+          if (numValue == numValue.toInt()) {
+            carrito[index].cantidad = numValue.toInt();
+          } else {
+            // Se le dio un clic al +, se formatea a 2 decimales para evitar números largos
+            carrito[index].cantidad = double.parse(numValue.toStringAsFixed(2));
+          }
+        }
+      } else if (delta > 0) {
+        _fijarCantidad(item, delta);
+      }
+    });
+    PedidoDraftStorage.save(carrito);
+  }
+
+  // 🔥 NUEVO: Ventana de entrada de datos (Texto libre) 🔥
+  Future<void> _editarCantidadManual(
+    dynamic item,
+    PedidoItem? pedidoActual,
+  ) async {
+    final TextEditingController controller = TextEditingController(
+      text: pedidoActual != null ? pedidoActual.cantidad.toString() : "",
+    );
+
+    final val = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Ingresar Cantidad", style: TextStyle(fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          keyboardType:
+              TextInputType.text, // Permite usar la barra espaciadora y el /
+          decoration: const InputDecoration(
+            hintText: "Ej: 1, 1.5, 1/2",
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.edit),
+          ),
+          autofocus: true,
+          onSubmitted: (v) => Navigator.pop(context, v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text("Aceptar"),
+          ),
+        ],
+      ),
+    );
+
+    if (val != null) {
+      _fijarCantidad(item, val);
+    }
+  }
+
+  void _cambiarUnidad(dynamic item, String nuevaUnidad) {
+    final codigo =
+        item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+    setState(() {
+      final index = carrito.indexWhere((c) => c.codigo == codigo);
+      if (index >= 0) {
+        carrito[index].unidad = nuevaUnidad;
+      } else {
+        _fijarCantidad(item, 1);
+        final newIndex = carrito.indexWhere((c) => c.codigo == codigo);
+        if (newIndex >= 0) carrito[newIndex].unidad = nuevaUnidad;
+      }
+    });
+    PedidoDraftStorage.save(carrito);
+  }
+
+  void _ciclarUnidad(dynamic item, String unidadActual, int delta) {
+    if (unidadesMedida.isEmpty) return;
+    int currentIndex = unidadesMedida.indexOf(unidadActual);
+    if (currentIndex == -1) currentIndex = 0;
+
+    int newIndex = currentIndex + delta;
+    if (newIndex >= 0 && newIndex < unidadesMedida.length) {
+      _cambiarUnidad(item, unidadesMedida[newIndex]);
+    }
+  }
+
   void _cambiarDestino(dynamic item, String destino) {
     final codigo =
         item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
@@ -251,7 +372,7 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
       if (index >= 0) {
         carrito[index].tipoDestino = destino;
       } else {
-        _actualizarCantidad(item, 1);
+        _fijarCantidad(item, 1);
         final newIndex = carrito.indexWhere((c) => c.codigo == codigo);
         if (newIndex >= 0) carrito[newIndex].tipoDestino = destino;
       }
@@ -265,7 +386,7 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
     int index = carrito.indexWhere((c) => c.codigo == codigo);
 
     if (index < 0) {
-      _actualizarCantidad(item, 1);
+      _fijarCantidad(item, 1);
       index = carrito.indexWhere((c) => c.codigo == codigo);
     }
 
@@ -345,7 +466,7 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
               codigo.isNotEmpty) {
             int sugerencia =
                 (stockMinimo - stockActual).ceil() + (stockMinimo * 0.2).ceil();
-            _actualizarCantidad(item, sugerencia < 1 ? 1 : sugerencia);
+            _fijarCantidad(item, sugerencia < 1 ? 1 : sugerencia);
             agregados++;
           }
         }
@@ -434,7 +555,6 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // 🔥 COLADOR EN VIVO PARA MARCA 🔥
                 Autocomplete<String>(
                   optionsBuilder: (TextEditingValue textValue) {
                     final q = textValue.text.trim().toLowerCase();
@@ -445,12 +565,9 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                   },
                   onSelected: (val) {
                     marcaController.text = val;
-                    setState(
-                      () {},
-                    ); // Fuerza actualización de la lista de abajo
+                    setState(() {});
                   },
                   fieldViewBuilder: (context, controller, focus, onSubmitted) {
-                    // Sincronizamos el controlador interno del Autocomplete con el nuestro
                     if (controller.text != marcaController.text &&
                         !focus.hasFocus) {
                       controller.text = marcaController.text;
@@ -469,14 +586,14 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                                 onPressed: () {
                                   controller.clear();
                                   marcaController.clear();
-                                  setState(() {}); // Limpia la lista inferior
+                                  setState(() {});
                                 },
                               )
                             : null,
                       ),
                       onChanged: (val) {
                         marcaController.text = val;
-                        setState(() {}); // Actualiza en vivo mientras tipeo
+                        setState(() {});
                       },
                     );
                   },
@@ -522,7 +639,6 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // 🔥 AUTOCOMPLETE PARA PROVEEDOR 🔥
                 if (esAdmin)
                   Autocomplete<String>(
                     optionsBuilder: (TextEditingValue textValue) {
@@ -534,44 +650,44 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                     },
                     onSelected: (val) {
                       setState(() => proveedorSeleccionado = val);
-                      buscar(
-                        searchController.text,
-                      ); // Lanza la búsqueda al dar clic en la lista
+                      buscar(searchController.text);
                     },
-                    fieldViewBuilder: (context, controller, focus, onSubmitted) {
-                      return TextField(
-                        controller: controller,
-                        focusNode: focus,
-                        decoration: InputDecoration(
-                          labelText: 'Filtrar por Proveedor',
-                          isDense: true,
-                          border: const OutlineInputBorder(),
-                          prefixIcon: const Icon(Icons.local_shipping_outlined),
-                          suffixIcon: controller.text.isNotEmpty
-                              ? IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  onPressed: () {
-                                    controller.clear();
-                                    setState(
-                                      () => proveedorSeleccionado = null,
-                                    );
-                                    buscar(
-                                      searchController.text,
-                                    ); // Busca todo de nuevo sin proveedor
-                                  },
-                                )
-                              : null,
-                        ),
-                        onChanged: (val) {
-                          // Guardamos lo que va escribiendo para que busque con ILIKE en Python
-                          proveedorSeleccionado = val.trim();
+                    fieldViewBuilder:
+                        (context, controller, focus, onSubmitted) {
+                          return TextField(
+                            controller: controller,
+                            focusNode: focus,
+                            decoration: InputDecoration(
+                              labelText: 'Filtrar por Proveedor',
+                              isDense: true,
+                              border: const OutlineInputBorder(),
+                              prefixIcon: const Icon(
+                                Icons.local_shipping_outlined,
+                              ),
+                              suffixIcon: controller.text.isNotEmpty
+                                  ? IconButton(
+                                      icon: const Icon(Icons.clear),
+                                      onPressed: () {
+                                        controller.clear();
+                                        setState(
+                                          () => proveedorSeleccionado = null,
+                                        );
+                                        buscar(searchController.text);
+                                      },
+                                    )
+                                  : null,
+                            ),
+                            onChanged: (val) {
+                              proveedorSeleccionado = val.trim();
+                            },
+                            onSubmitted: (val) {
+                              setState(
+                                () => proveedorSeleccionado = val.trim(),
+                              );
+                              buscar(searchController.text);
+                            },
+                          );
                         },
-                        onSubmitted: (val) {
-                          setState(() => proveedorSeleccionado = val.trim());
-                          buscar(searchController.text);
-                        },
-                      );
-                    },
                   ),
 
                 if (currentList.isNotEmpty)
@@ -661,12 +777,24 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                       final PedidoItem? pedidoActual = indexCarrito >= 0
                           ? carrito[indexCarrito]
                           : null;
-                      final int cantidadPedida = pedidoActual?.cantidad ?? 0;
+
+                      // 🔥 Ahora la variable recibe strings ("1/2") o números 🔥
+                      final dynamic cantidadPedida =
+                          pedidoActual?.cantidad ?? 0;
+                      final bool estaEnCarrito =
+                          cantidadPedida.toString() != "0" &&
+                          cantidadPedida.toString() != "";
+
                       final String destino =
                           pedidoActual?.tipoDestino ?? "VENTA";
                       final bool tieneNota =
                           pedidoActual?.notaCompra != null &&
                           pedidoActual!.notaCompra!.isNotEmpty;
+                      final String unidadActual =
+                          pedidoActual?.unidad ??
+                          (unidadesMedida.isNotEmpty
+                              ? unidadesMedida.first
+                              : 'UNIDADES');
 
                       return Card(
                         elevation: estaEnPeligro ? 3 : 1,
@@ -757,65 +885,91 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                                   ),
                                 ),
 
-                              const Divider(height: 16),
+                              const Divider(height: 10),
 
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
+                                  // 1. Selector de Cantidad [- N +] (El N es Clicable)
                                   Container(
+                                    height: 32,
                                     decoration: BoxDecoration(
-                                      color: cantidadPedida > 0
+                                      color: estaEnCarrito
                                           ? Colors.blue.shade50
                                           : Colors.grey.shade100,
-                                      borderRadius: BorderRadius.circular(20),
+                                      borderRadius: BorderRadius.circular(16),
                                       border: Border.all(
-                                        color: cantidadPedida > 0
+                                        color: estaEnCarrito
                                             ? Colors.blue.shade200
                                             : Colors.grey.shade300,
                                       ),
                                     ),
                                     child: Row(
+                                      mainAxisSize: MainAxisSize.min,
                                       children: [
                                         IconButton(
                                           icon: Icon(
                                             Icons.remove,
-                                            color: cantidadPedida > 0
+                                            color: estaEnCarrito
                                                 ? Colors.red
                                                 : Colors.grey,
-                                            size: 20,
+                                            size: 18,
                                           ),
                                           constraints: const BoxConstraints(
-                                            minWidth: 36,
-                                            minHeight: 36,
+                                            minWidth: 32,
+                                            minHeight: 32,
                                           ),
                                           padding: EdgeInsets.zero,
-                                          onPressed: cantidadPedida > 0
+                                          onPressed: estaEnCarrito
                                               ? () => _actualizarCantidad(
                                                   item,
                                                   -1,
                                                 )
                                               : null,
                                         ),
-                                        Text(
-                                          '$cantidadPedida',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: cantidadPedida > 0
-                                                ? Colors.blue.shade900
-                                                : Colors.grey,
+
+                                        // 🔥 AQUÍ ESTÁ LA MAGIA DEL CLIC 🔥
+                                        InkWell(
+                                          onTap: () => _editarCantidadManual(
+                                            item,
+                                            pedidoActual,
+                                          ),
+                                          child: Container(
+                                            constraints: const BoxConstraints(
+                                              minWidth: 24,
+                                            ),
+                                            alignment: Alignment.center,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                            ),
+                                            child: Text(
+                                              '$cantidadPedida',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: estaEnCarrito
+                                                    ? Colors.blue.shade900
+                                                    : Colors.grey,
+                                                decoration: TextDecoration
+                                                    .underline, // Indicio visual de que se puede editar
+                                                decorationStyle:
+                                                    TextDecorationStyle.dotted,
+                                              ),
+                                            ),
                                           ),
                                         ),
+
                                         IconButton(
                                           icon: Icon(
                                             Icons.add,
                                             color: Colors.blue.shade700,
-                                            size: 20,
+                                            size: 18,
                                           ),
                                           constraints: const BoxConstraints(
-                                            minWidth: 36,
-                                            minHeight: 36,
+                                            minWidth: 32,
+                                            minHeight: 32,
                                           ),
                                           padding: EdgeInsets.zero,
                                           onPressed: () =>
@@ -825,57 +979,132 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                                     ),
                                   ),
 
-                                  Row(
-                                    children: [
-                                      ChoiceChip(
-                                        label: const Text(
-                                          'VENTA',
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        selected: destino == 'VENTA',
-                                        padding: const EdgeInsets.all(2),
-                                        selectedColor: Colors.green.shade100,
-                                        onSelected: (_) =>
-                                            _cambiarDestino(item, 'VENTA'),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      ChoiceChip(
-                                        label: const Text(
-                                          'GASTO',
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        selected: destino == 'GASTO',
-                                        padding: const EdgeInsets.all(2),
-                                        selectedColor: Colors.orange.shade100,
-                                        onSelected: (_) =>
-                                            _cambiarDestino(item, 'GASTO'),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      InkWell(
-                                        onTap: () => _agregarNota(item),
-                                        child: CircleAvatar(
-                                          radius: 16,
-                                          backgroundColor: tieneNota
-                                              ? Colors.blue.shade100
-                                              : Colors.grey.shade200,
-                                          child: Icon(
-                                            tieneNota
-                                                ? Icons.comment
-                                                : Icons.comment_outlined,
-                                            size: 16,
-                                            color: tieneNota
-                                                ? Colors.blue.shade800
-                                                : Colors.grey.shade600,
-                                          ),
+                                  // 2. Stepper de Unidad (< UNIDADES >)
+                                  if (unidadesMedida.isNotEmpty)
+                                    Container(
+                                      height: 32,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade50,
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: Colors.grey.shade300,
                                         ),
                                       ),
-                                    ],
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.chevron_left,
+                                              size: 18,
+                                              color: Colors.blueGrey,
+                                            ),
+                                            constraints: const BoxConstraints(
+                                              minWidth: 28,
+                                              minHeight: 32,
+                                            ),
+                                            padding: EdgeInsets.zero,
+                                            onPressed:
+                                                unidadesMedida.indexOf(
+                                                      unidadActual,
+                                                    ) >
+                                                    0
+                                                ? () => _ciclarUnidad(
+                                                    item,
+                                                    unidadActual,
+                                                    -1,
+                                                  )
+                                                : null,
+                                          ),
+                                          Text(
+                                            unidadActual,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.blue.shade900,
+                                            ),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.chevron_right,
+                                              size: 18,
+                                              color: Colors.blueGrey,
+                                            ),
+                                            constraints: const BoxConstraints(
+                                              minWidth: 28,
+                                              minHeight: 32,
+                                            ),
+                                            padding: EdgeInsets.zero,
+                                            onPressed:
+                                                unidadesMedida.indexOf(
+                                                      unidadActual,
+                                                    ) <
+                                                    unidadesMedida.length - 1
+                                                ? () => _ciclarUnidad(
+                                                    item,
+                                                    unidadActual,
+                                                    1,
+                                                  )
+                                                : null,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+
+                                  // 3. Destino (Venta / Gasto)
+                                  ChoiceChip(
+                                    label: const Text(
+                                      'Venta',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    selected: destino == 'VENTA',
+                                    padding: EdgeInsets.zero,
+                                    labelPadding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                    ),
+                                    selectedColor: Colors.green.shade100,
+                                    onSelected: (_) =>
+                                        _cambiarDestino(item, 'VENTA'),
+                                  ),
+                                  ChoiceChip(
+                                    label: const Text(
+                                      'Gasto',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    selected: destino == 'GASTO',
+                                    padding: EdgeInsets.zero,
+                                    labelPadding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                    ),
+                                    selectedColor: Colors.orange.shade100,
+                                    onSelected: (_) =>
+                                        _cambiarDestino(item, 'GASTO'),
+                                  ),
+
+                                  // 4. Comentario
+                                  InkWell(
+                                    onTap: () => _agregarNota(item),
+                                    child: CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: tieneNota
+                                          ? Colors.blue.shade100
+                                          : Colors.grey.shade200,
+                                      child: Icon(
+                                        tieneNota
+                                            ? Icons.comment
+                                            : Icons.comment_outlined,
+                                        size: 14,
+                                        color: tieneNota
+                                            ? Colors.blue.shade800
+                                            : Colors.grey.shade600,
+                                      ),
+                                    ),
                                   ),
                                 ],
                               ),

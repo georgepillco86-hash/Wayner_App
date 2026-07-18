@@ -5,12 +5,11 @@ class PedidoItem {
   final String? clase;
   final double stockActual;
 
-  int cantidad;
+  dynamic cantidad; // 🔥 CAMBIADO: Ahora acepta 1, 1.5 o "1/2"
   bool seleccionado;
 
   final String? proveedor;
-  String?
-  notaCompra; // 🔥 CORREGIDO: Se quitó el 'final' para permitir reescribir notas
+  String? notaCompra;
 
   String? unidad;
   String tipoDestino;
@@ -36,7 +35,7 @@ class PedidoItem {
       marca: json["marca"]?.toString() ?? "",
       clase: json["clase"]?.toString(),
       stockActual: double.tryParse((json["stock_actual"] ?? 0).toString()) ?? 0,
-      cantidad: int.tryParse((json["cantidad"] ?? 1).toString()) ?? 1,
+      cantidad: json["cantidad"] ?? 1, // 🔥 Recibe cualquier formato
       seleccionado: json["seleccionado"] == true,
       proveedor: json["proveedor"]?.toString(),
       notaCompra: json["nota_compra"]?.toString(),

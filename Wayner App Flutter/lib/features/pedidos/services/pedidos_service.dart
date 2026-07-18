@@ -198,7 +198,7 @@ class PedidosService {
   Future<Map<String, dynamic>> agregarItemPedido({
     required int pedidoId,
     required String codigoProducto,
-    required int cantidad,
+    required dynamic cantidad, // 🔥 CAMBIADO A DYNAMIC
     String? unidad,
     String? notaCompra,
     String tipoDestino = "VENTA",
@@ -226,7 +226,7 @@ class PedidosService {
   Future<Map<String, dynamic>> actualizarCantidadItemPedido({
     required int pedidoId,
     required int itemId,
-    required int cantidad,
+    required dynamic cantidad, // 🔥 CAMBIADO A DYNAMIC
   }) async {
     final response = await http.patch(
       Uri.parse("$baseUrl/$pedidoId/items/$itemId"),

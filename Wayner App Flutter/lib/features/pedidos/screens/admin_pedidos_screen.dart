@@ -70,67 +70,55 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
       appBar: AppBar(
         title: const Text("Administrar pedidos"),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: cargarPedidos,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: cargarPedidos),
         ],
       ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorMessage != null
-              ? Center(child: Text(errorMessage!))
-              : pedidos.isEmpty
-                  ? const Center(child: Text("No hay pedidos registrados"))
-                  : ListView.builder(
-                      itemCount: pedidos.length,
-                      itemBuilder: (context, index) {
-                        final pedido = pedidos[index];
-                        final estado =
-                            pedido["estado"]?.toString() ?? "SIN ESTADO";
+          ? Center(child: Text(errorMessage!))
+          : pedidos.isEmpty
+          ? const Center(child: Text("No hay pedidos registrados"))
+          : ListView.builder(
+              itemCount: pedidos.length,
+              itemBuilder: (context, index) {
+                final pedido = pedidos[index];
+                final estado = pedido["estado"]?.toString() ?? "SIN ESTADO";
 
-                        return Card(
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: colorEstado(estado),
-                              child: const Icon(
-                                Icons.assignment,
-                                color: Colors.white,
-                              ),
-                            ),
-                            title: Text("Pedido #${pedido["id"]}"),
-                            subtitle: Text(
-                              "Usuario: ${pedido["usuario"] ?? ""}\n"
-                              "Estado: $estado\n"
-                              "Items: ${pedido["total_items"] ?? 0}\n"
-                              "Fecha: ${formatearFecha(pedido["fecha_creacion"])}",
-                            ),
-                            isThreeLine: true,
-                            trailing: const Icon(
-                              Icons.arrow_forward_ios,
-                              size: 16,
-                            ),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => AdminPedidoDetalleScreen(
-                                    pedidoId: int.tryParse(
-                                          pedido["id"].toString(),
-                                        ) ??
-                                        0,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        );
-                      },
+                return Card(
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: colorEstado(estado),
+                      child: const Icon(Icons.assignment, color: Colors.white),
                     ),
+                    title: Text("Orden de pedido #${pedido["id"]}"),
+                    subtitle: Text(
+                      "Usuario: ${pedido["usuario"] ?? ""}\n"
+                      "Estado: $estado\n"
+                      "Items: ${pedido["total_items"] ?? 0}\n"
+                      "Fecha: ${formatearFecha(pedido["fecha_creacion"])}",
+                    ),
+                    isThreeLine: true,
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AdminPedidoDetalleScreen(
+                            pedidoId:
+                                int.tryParse(pedido["id"].toString()) ?? 0,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
     );
   }
 }

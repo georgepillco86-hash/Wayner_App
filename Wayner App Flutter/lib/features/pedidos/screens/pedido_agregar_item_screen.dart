@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../models/pedido_item.dart';
 import '../services/pedidos_service.dart';
 import '../../../screens/scanner/scanner_screen.dart';
 import '../../../core/storage/session_storage.dart';
+import '../../saldos/data/services/saldos_api_service.dart';
 
 class PedidoAgregarItemScreen extends StatefulWidget {
   final int pedidoId;
-
-  const PedidoAgregarItemScreen({
-    super.key,
-    required this.pedidoId,
-  });
+  const PedidoAgregarItemScreen({super.key, required this.pedidoId});
 
   @override
   State<PedidoAgregarItemScreen> createState() =>
@@ -19,78 +17,96 @@ class PedidoAgregarItemScreen extends StatefulWidget {
 
 class _PedidoAgregarItemScreenState extends State<PedidoAgregarItemScreen> {
   final PedidosService service = PedidosService();
+  final SaldosApiService saldosService = SaldosApiService();
 
   final TextEditingController searchController = TextEditingController();
-  final TextEditingController secondSearchController = TextEditingController();
+  final TextEditingController marcaController = TextEditingController();
 
-  List<String> unidadesMedida = ['UNIDADES'];
   List<String> proveedores = [];
+  List<String> marcasGlobales = [];
+  List<String> clasesDisponibles = [
+    'Todas las clases',
+    'BAZAR',
+    'COMISARIATO',
+    'FERRETERIA',
+  ];
 
   String? proveedorSeleccionado;
+  String claseSeleccionada = 'Todas las clases';
+
   bool esAdmin = false;
+  bool busquedaProfunda = false;
+  bool isSaving = false;
+
+  List<String> unidadesMedida = ['UNIDADES'];
+  List<dynamic> resultados = [];
+
+  // Usamos la misma estructura local temporal antes de enviar a BD
+  List<PedidoItem> itemsNuevos = [];
 
   bool isLoading = false;
   String? errorMessage;
-  List<dynamic> resultados = [];
 
   @override
   void initState() {
     super.initState();
     cargarUnidadesMedida();
-    cargarSesionYProveedores();
+    cargarSesionYFiltros();
   }
 
-  Future<void> cargarSesionYProveedores() async {
+  @override
+  void dispose() {
+    searchController.dispose();
+    marcaController.dispose();
+    super.dispose();
+  }
+
+  Future<void> cargarSesionYFiltros() async {
     final user = await SessionStorage.getUser();
     final rol = user?.rol.trim().toUpperCase() ?? "";
 
     if (!mounted) return;
-
-    setState(() {
-      esAdmin = rol == "ADMIN";
-    });
-
-    if (!esAdmin) return;
+    setState(() => esAdmin = rol == "ADMIN" || rol == "SUPERADMIN");
 
     try {
-      final data = await service.obtenerProveedores();
+      final marcasBD = await saldosService.obtenerMarcasGlobales();
+      if (mounted) setState(() => marcasGlobales = marcasBD);
+    } catch (_) {}
 
-      if (!mounted) return;
-
-      setState(() {
-        proveedores = data;
-      });
-    } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        proveedores = [];
-      });
-    }
+    if (!esAdmin) return;
+    try {
+      final provBD = await service.obtenerProveedores();
+      if (mounted) setState(() => proveedores = provBD);
+    } catch (_) {}
   }
 
   Future<void> cargarUnidadesMedida() async {
     try {
       final unidades = await service.obtenerUnidadesMedida();
-
-      if (!mounted) return;
-
-      setState(() {
-        unidadesMedida = unidades.isEmpty ? ['UNIDADES'] : unidades;
-      });
+      if (mounted)
+        setState(
+          () => unidadesMedida = unidades.isEmpty ? ['UNIDADES'] : unidades,
+        );
     } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        unidadesMedida = ['UNIDADES'];
-      });
+      if (mounted) setState(() => unidadesMedida = ['UNIDADES']);
     }
   }
 
-  Future<void> buscar(String query) async {
-    if (query.trim().length < 2) {
-      if (!mounted) return;
+  List<dynamic> get resultadosFiltrados {
+    final filtroMarca = marcaController.text.trim().toLowerCase();
+    if (filtroMarca.isEmpty) return resultados;
 
+    return resultados.where((item) {
+      final m = (item["Marca"] ?? item["marca"] ?? "").toString().toLowerCase();
+      return m.contains(filtroMarca);
+    }).toList();
+  }
+
+  Future<void> buscar(String query) async {
+    if (query.trim().isEmpty &&
+        proveedorSeleccionado == null &&
+        claseSeleccionada == 'Todas las clases') {
+      if (!mounted) return;
       setState(() {
         resultados = [];
         errorMessage = null;
@@ -104,65 +120,38 @@ class _PedidoAgregarItemScreenState extends State<PedidoAgregarItemScreen> {
     });
 
     try {
-      final data = await service.buscarProductos(
-        query.trim(),
-        query2: secondSearchController.text.trim(),
-        proveedor: esAdmin ? proveedorSeleccionado : null,
-      );
+      final prov =
+          (esAdmin &&
+              proveedorSeleccionado != null &&
+              proveedorSeleccionado!.isNotEmpty)
+          ? proveedorSeleccionado
+          : null;
+      final clase = claseSeleccionada == 'Todas las clases'
+          ? null
+          : claseSeleccionada;
+
+      List<dynamic> data = [];
+      if (busquedaProfunda) {
+        data = await saldosService.buscarEnKardex(query.trim());
+      } else {
+        data = await saldosService.buscarRapido(
+          termino: query.trim(),
+          proveedor: prov,
+          clase: clase,
+        );
+      }
 
       if (!mounted) return;
-
-      setState(() {
-        resultados = data;
-      });
+      setState(() => resultados = data);
     } catch (_) {
       if (!mounted) return;
-
       setState(() {
-        errorMessage = "No se pudieron cargar productos";
+        errorMessage = "No se pudieron cargar productos.";
         resultados = [];
       });
     } finally {
       if (!mounted) return;
-
-      setState(() {
-        isLoading = false;
-      });
-    }
-  }
-
-  Future<void> buscarPorCodigo(String codigo) async {
-    if (codigo.trim().isEmpty) return;
-
-    setState(() {
-      isLoading = true;
-      errorMessage = null;
-    });
-
-    try {
-      final producto = await service.getProductoPorCodigo(codigo.trim());
-
-      if (producto.isNotEmpty) {
-        await agregarProducto(producto);
-      } else {
-        if (!mounted) return;
-
-        setState(() {
-          errorMessage = "No se encontró el producto escaneado.";
-        });
-      }
-    } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        errorMessage = "No se pudo consultar el producto escaneado.";
-      });
-    } finally {
-      if (!mounted) return;
-
-      setState(() {
-        isLoading = false;
-      });
+      setState(() => isLoading = false);
     }
   }
 
@@ -172,379 +161,496 @@ class _PedidoAgregarItemScreenState extends State<PedidoAgregarItemScreen> {
       MaterialPageRoute(
         builder: (_) => ScannerScreen(
           onDetect: (codigo) async {
-            Navigator.pop(context);
-            await buscarPorCodigo(codigo);
+            searchController.text = codigo;
+            await buscar(codigo);
           },
         ),
       ),
     );
   }
 
-  Widget buildProveedorAutocomplete() {
-    if (!esAdmin) return const SizedBox.shrink();
+  // =========================================================================
+  // 🔥 LÓGICA DE CANTIDADES (Igual que en el pedido inteligente) 🔥
+  // =========================================================================
 
-    return Column(
-      children: [
-        const SizedBox(height: 10),
-        Autocomplete<String>(
-          optionsBuilder: (TextEditingValue textEditingValue) {
-            final query = textEditingValue.text.trim().toLowerCase();
+  void _fijarCantidad(dynamic item, dynamic nuevaCantidad) {
+    final codigo =
+        item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+    if (codigo.isEmpty) return;
 
-            if (query.isEmpty) {
-              return proveedores.take(20);
-            }
+    setState(() {
+      final index = itemsNuevos.indexWhere((c) => c.codigo == codigo);
+      if (index >= 0) {
+        if (nuevaCantidad.toString() == "0" ||
+            nuevaCantidad.toString().isEmpty) {
+          itemsNuevos.removeAt(index);
+        } else {
+          itemsNuevos[index].cantidad = nuevaCantidad;
+        }
+      } else if (nuevaCantidad.toString() != "0" &&
+          nuevaCantidad.toString().isNotEmpty) {
+        final nombreCorregido =
+            item["Nombre"]?.toString() ??
+            item["NombreProducto"]?.toString() ??
+            item["nombre"]?.toString() ??
+            "Sin nombre";
+        final stockActual =
+            double.tryParse(
+              (item["Stock"] ?? item["stock_actual"] ?? 0).toString(),
+            ) ??
+            0;
 
-            return proveedores.where(
-              (proveedor) => proveedor.toLowerCase().contains(query),
-            );
-          },
-          displayStringForOption: (option) => option,
-          onSelected: (String proveedor) {
-            setState(() {
-              proveedorSeleccionado = proveedor;
-            });
-
-            if (searchController.text.trim().length >= 2) {
-              buscar(searchController.text);
-            }
-          },
-          fieldViewBuilder: (
-            context,
-            textEditingController,
-            focusNode,
-            onFieldSubmitted,
-          ) {
-            return TextField(
-              controller: textEditingController,
-              focusNode: focusNode,
-              decoration: InputDecoration(
-                labelText: 'Filtrar por proveedor',
-                hintText: 'Escriba el nombre del proveedor',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.local_shipping_outlined),
-                suffixIcon: textEditingController.text.trim().isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          textEditingController.clear();
-
-                          setState(() {
-                            proveedorSeleccionado = null;
-                          });
-
-                          if (searchController.text.trim().length >= 2) {
-                            buscar(searchController.text);
-                          }
-                        },
-                      ),
-              ),
-              onChanged: (value) {
-                final cleanValue = value.trim();
-
-                setState(() {
-                  proveedorSeleccionado = cleanValue.isEmpty ? null : cleanValue;
-                });
-
-                if (searchController.text.trim().length >= 2) {
-                  buscar(searchController.text);
-                }
-              },
-              onSubmitted: (value) {
-                final cleanValue = value.trim();
-
-                setState(() {
-                  proveedorSeleccionado = cleanValue.isEmpty ? null : cleanValue;
-                });
-
-                if (searchController.text.trim().length >= 2) {
-                  buscar(searchController.text);
-                }
-              },
-            );
-          },
-          optionsViewBuilder: (context, onSelected, options) {
-            return Align(
-              alignment: Alignment.topLeft,
-              child: Material(
-                elevation: 4,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxHeight: 260,
-                    maxWidth: 420,
-                  ),
-                  child: ListView.builder(
-                    padding: EdgeInsets.zero,
-                    itemCount: options.length,
-                    itemBuilder: (context, index) {
-                      final proveedor = options.elementAt(index);
-
-                      return ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.local_shipping_outlined),
-                        title: Text(
-                          proveedor,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: () => onSelected(proveedor),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      ],
-    );
+        itemsNuevos.add(
+          PedidoItem(
+            codigo: codigo,
+            nombre: nombreCorregido,
+            marca: item["Marca"]?.toString() ?? item["marca"]?.toString() ?? "",
+            clase: item["Clase"]?.toString() ?? item["clase"]?.toString(),
+            stockActual: stockActual,
+            cantidad: nuevaCantidad,
+            proveedor:
+                item["Proveedor"]?.toString() ?? item["proveedor"]?.toString(),
+            unidad: unidadesMedida.isNotEmpty
+                ? unidadesMedida.first
+                : 'UNIDADES',
+            tipoDestino: "VENTA",
+          ),
+        );
+      }
+    });
   }
 
-  Future<void> agregarProducto(dynamic item) async {
-    final cantidadController = TextEditingController(text: "1");
-    final notaCompraController = TextEditingController();
+  void _actualizarCantidad(dynamic item, int delta) {
+    final codigo =
+        item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+    if (codigo.isEmpty) return;
 
-    String unidadSeleccionada =
-        unidadesMedida.isNotEmpty ? unidadesMedida.first : 'UNIDADES';
+    setState(() {
+      final index = itemsNuevos.indexWhere((c) => c.codigo == codigo);
+      if (index >= 0) {
+        dynamic current = itemsNuevos[index].cantidad;
+        double numValue = 0.0;
 
-    String tipoDestinoSeleccionado = "VENTA";
+        if (current is num) {
+          numValue = current.toDouble();
+        } else if (current is String) {
+          if (current.contains('/')) {
+            var parts = current.split('/');
+            if (parts.length == 2) {
+              numValue =
+                  (double.tryParse(parts[0]) ?? 0) /
+                  (double.tryParse(parts[1]) ?? 1);
+            }
+          } else {
+            numValue = double.tryParse(current) ?? 0.0;
+          }
+        }
 
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (_) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text("Agregar producto"),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        item["nombre"]?.toString() ?? "Producto sin nombre",
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text("Código: ${item["codigo"] ?? ""}"),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text("Marca: ${item["marca"] ?? ""}"),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text("Stock: ${item["stock_actual"] ?? 0}"),
-                    ),
-                    if ((item["proveedor"]?.toString() ?? "").isNotEmpty)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text("Proveedor: ${item["proveedor"]}"),
-                      ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: cantidadController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: "Cantidad a pedir",
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      value: unidadSeleccionada,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: "Unidad de medida",
-                        border: OutlineInputBorder(),
-                      ),
-                      items: unidadesMedida.map((unidad) {
-                        return DropdownMenuItem<String>(
-                          value: unidad,
-                          child: Text(unidad),
-                        );
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() {
-                          unidadSeleccionada = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        "Destino del producto",
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: const Text("VENTA"),
-                          avatar: Icon(
-                            Icons.shopping_cart,
-                            size: 18,
-                            color: tipoDestinoSeleccionado == "VENTA"
-                                ? Colors.blue.shade900
-                                : null,
-                          ),
-                          selected: tipoDestinoSeleccionado == "VENTA",
-                          selectedColor: Colors.blue.shade100,
-                          onSelected: (_) {
-                            setDialogState(() {
-                              tipoDestinoSeleccionado = "VENTA";
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text("GASTO"),
-                          avatar: Icon(
-                            Icons.local_fire_department,
-                            size: 18,
-                            color: tipoDestinoSeleccionado == "GASTO"
-                                ? Colors.orange.shade900
-                                : null,
-                          ),
-                          selected: tipoDestinoSeleccionado == "GASTO",
-                          selectedColor: Colors.orange.shade100,
-                          onSelected: (_) {
-                            setDialogState(() {
-                              tipoDestinoSeleccionado = "GASTO";
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: notaCompraController,
-                      maxLines: 3,
-                      maxLength: 500,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: const InputDecoration(
-                        labelText: "Nota de compra",
-                        hintText: "Nota opcional para este producto",
-                        border: OutlineInputBorder(),
-                        alignLabelWithHint: true,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text("Cancelar"),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text("Agregar"),
-                ),
-              ],
+        numValue += delta;
+
+        if (numValue <= 0) {
+          itemsNuevos.removeAt(index);
+        } else {
+          if (numValue == numValue.toInt()) {
+            itemsNuevos[index].cantidad = numValue.toInt();
+          } else {
+            itemsNuevos[index].cantidad = double.parse(
+              numValue.toStringAsFixed(2),
             );
-          },
-        );
-      },
+          }
+        }
+      } else if (delta > 0) {
+        _fijarCantidad(item, delta);
+      }
+    });
+  }
+
+  Future<void> _editarCantidadManual(
+    dynamic item,
+    PedidoItem? pedidoActual,
+  ) async {
+    final TextEditingController controller = TextEditingController(
+      text: pedidoActual != null ? pedidoActual.cantidad.toString() : "",
     );
 
-    if (confirmado != true) return;
+    final val = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Ingresar Cantidad", style: TextStyle(fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.text,
+          decoration: const InputDecoration(
+            hintText: "Ej: 1, 1.5, 1/2",
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.edit),
+          ),
+          autofocus: true,
+          onSubmitted: (v) => Navigator.pop(context, v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text("Aceptar"),
+          ),
+        ],
+      ),
+    );
 
-    final cantidad = int.tryParse(cantidadController.text.trim()) ?? 1;
-    final notaCompra = notaCompraController.text.trim();
+    if (val != null) {
+      _fijarCantidad(item, val);
+    }
+  }
 
-    try {
-      await service.agregarItemPedido(
-        pedidoId: widget.pedidoId,
-        codigoProducto: item["codigo"]?.toString() ?? "",
-        cantidad: cantidad <= 0 ? 1 : cantidad,
-        unidad: unidadSeleccionada,
-        notaCompra: notaCompra.isEmpty ? null : notaCompra,
-        tipoDestino: tipoDestinoSeleccionado,
-      );
+  void _cambiarUnidad(dynamic item, String nuevaUnidad) {
+    final codigo =
+        item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+    setState(() {
+      final index = itemsNuevos.indexWhere((c) => c.codigo == codigo);
+      if (index >= 0) {
+        itemsNuevos[index].unidad = nuevaUnidad;
+      } else {
+        _fijarCantidad(item, 1);
+        final newIndex = itemsNuevos.indexWhere((c) => c.codigo == codigo);
+        if (newIndex >= 0) itemsNuevos[newIndex].unidad = nuevaUnidad;
+      }
+    });
+  }
 
-      if (!mounted) return;
+  void _ciclarUnidad(dynamic item, String unidadActual, int delta) {
+    if (unidadesMedida.isEmpty) return;
+    int currentIndex = unidadesMedida.indexOf(unidadActual);
+    if (currentIndex == -1) currentIndex = 0;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            tipoDestinoSeleccionado == "GASTO"
-                ? "Producto agregado como GASTO"
-                : "Producto agregado como VENTA",
+    int newIndex = currentIndex + delta;
+    if (newIndex >= 0 && newIndex < unidadesMedida.length) {
+      _cambiarUnidad(item, unidadesMedida[newIndex]);
+    }
+  }
+
+  void _cambiarDestino(dynamic item, String destino) {
+    final codigo =
+        item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+    setState(() {
+      final index = itemsNuevos.indexWhere((c) => c.codigo == codigo);
+      if (index >= 0) {
+        itemsNuevos[index].tipoDestino = destino;
+      } else {
+        _fijarCantidad(item, 1);
+        final newIndex = itemsNuevos.indexWhere((c) => c.codigo == codigo);
+        if (newIndex >= 0) itemsNuevos[newIndex].tipoDestino = destino;
+      }
+    });
+  }
+
+  Future<void> _agregarNota(dynamic item) async {
+    final codigo =
+        item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+    int index = itemsNuevos.indexWhere((c) => c.codigo == codigo);
+
+    if (index < 0) {
+      _fijarCantidad(item, 1);
+      index = itemsNuevos.indexWhere((c) => c.codigo == codigo);
+    }
+
+    final currentItem = itemsNuevos[index];
+    final notaController = TextEditingController(
+      text: currentItem.notaCompra ?? "",
+    );
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(
+          "Nota para ${currentItem.nombre}",
+          style: const TextStyle(fontSize: 16),
+        ),
+        content: TextField(
+          controller: notaController,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: "Escriba una observación...",
+            border: OutlineInputBorder(),
           ),
         ),
-      );
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Guardar Nota"),
+          ),
+        ],
+      ),
+    );
 
-      Navigator.pop(context, true);
-    } catch (_) {
-      if (!mounted) return;
+    if (confirm == true) {
+      setState(() {
+        final nuevaNota = notaController.text.trim().isEmpty
+            ? null
+            : notaController.text.trim();
+        itemsNuevos[index] = PedidoItem(
+          codigo: currentItem.codigo,
+          nombre: currentItem.nombre,
+          marca: currentItem.marca,
+          clase: currentItem.clase,
+          stockActual: currentItem.stockActual,
+          cantidad: currentItem.cantidad,
+          proveedor: currentItem.proveedor,
+          unidad: currentItem.unidad,
+          tipoDestino: currentItem.tipoDestino,
+          notaCompra: nuevaNota,
+        );
+      });
+    }
+  }
 
+  // 🔥 GUARDAR DIRECTO EN EL PEDIDO EN BD 🔥
+  Future<void> _guardarEnPedidoBD() async {
+    if (itemsNuevos.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No se pudo agregar el producto")),
+        const SnackBar(content: Text('No has seleccionado productos')),
       );
+      return;
+    }
+
+    setState(() => isSaving = true);
+    try {
+      for (var item in itemsNuevos) {
+        await service.agregarItemPedido(
+          pedidoId: widget.pedidoId,
+          codigoProducto: item.codigo,
+          cantidad: item.cantidad,
+          unidad: item.unidad,
+          notaCompra: item.notaCompra,
+          tipoDestino: item.tipoDestino,
+        );
+      }
+      if (mounted) {
+        Navigator.pop(
+          context,
+          true,
+        ); // Retorna a la pantalla anterior con éxito
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error al guardar algunos productos'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isSaving = false);
     }
   }
 
   @override
-  void dispose() {
-    searchController.dispose();
-    secondSearchController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final currentList = resultadosFiltrados;
+
     return Scaffold(
+      backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
-        title: const Text("Agregar producto"),
+        title: const Text("Agregar productos"),
         actions: [
           IconButton(
             icon: const Icon(Icons.qr_code_scanner),
-            tooltip: "Escanear código",
             onPressed: abrirScanner,
           ),
         ],
       ),
+      // 🔥 BOTÓN FLOTANTE PARA GUARDAR 🔥
+      floatingActionButton: itemsNuevos.isNotEmpty
+          ? FloatingActionButton.extended(
+              onPressed: isSaving ? null : _guardarEnPedidoBD,
+              backgroundColor: Colors.green.shade600,
+              icon: isSaving
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.save, color: Colors.white),
+              label: Text(
+                "Guardar ${itemsNuevos.length} items",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            )
+          : null,
       body: Column(
         children: [
-          Padding(
+          Container(
+            color: Colors.white,
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
                 TextField(
                   controller: searchController,
-                  decoration: const InputDecoration(
-                    hintText: "Buscar producto por código, nombre, marca o clase",
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    hintText: "Buscar producto por código, nombre...",
+                    prefixIcon: const Icon(Icons.search),
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.send),
+                      onPressed: () => buscar(searchController.text),
+                    ),
                   ),
-                  onChanged: buscar,
+                  onSubmitted: buscar,
                 ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: secondSearchController,
-                  decoration: const InputDecoration(
-                    hintText: "Refinar búsqueda opcional",
-                    prefixIcon: Icon(Icons.filter_alt),
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (_) {
-                    if (searchController.text.trim().length >= 2) {
-                      buscar(searchController.text);
+                const SizedBox(height: 8),
+
+                Autocomplete<String>(
+                  optionsBuilder: (TextEditingValue textValue) {
+                    final q = textValue.text.trim().toLowerCase();
+                    if (q.isEmpty) return marcasGlobales.take(20);
+                    return marcasGlobales.where(
+                      (m) => m.toLowerCase().contains(q),
+                    );
+                  },
+                  onSelected: (val) {
+                    marcaController.text = val;
+                    setState(() {});
+                  },
+                  fieldViewBuilder: (context, controller, focus, onSubmitted) {
+                    if (controller.text != marcaController.text &&
+                        !focus.hasFocus) {
+                      controller.text = marcaController.text;
                     }
+                    return TextField(
+                      controller: controller,
+                      focusNode: focus,
+                      decoration: InputDecoration(
+                        labelText: 'Refinar búsqueda opcional (Marca)',
+                        isDense: true,
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.filter_alt_outlined),
+                        suffixIcon: controller.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  controller.clear();
+                                  marcaController.clear();
+                                  setState(() {});
+                                },
+                              )
+                            : null,
+                      ),
+                      onChanged: (val) {
+                        marcaController.text = val;
+                        setState(() {});
+                      },
+                    );
                   },
                 ),
-                buildProveedorAutocomplete(),
+                const SizedBox(height: 8),
+
+                Row(
+                  children: [
+                    const Text('Búsqueda Profunda (Kardex):'),
+                    Switch(
+                      value: busquedaProfunda,
+                      onChanged: (val) {
+                        setState(() => busquedaProfunda = val);
+                        if (searchController.text.length >= 2)
+                          buscar(searchController.text);
+                      },
+                    ),
+                  ],
+                ),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: 'Clase',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                        ),
+                        value: claseSeleccionada,
+                        items: clasesDisponibles
+                            .map(
+                              (c) => DropdownMenuItem(value: c, child: Text(c)),
+                            )
+                            .toList(),
+                        onChanged: (val) {
+                          setState(() => claseSeleccionada = val!);
+                          buscar(searchController.text);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                if (esAdmin)
+                  Autocomplete<String>(
+                    optionsBuilder: (TextEditingValue textValue) {
+                      final q = textValue.text.trim().toLowerCase();
+                      if (q.isEmpty) return proveedores.take(20);
+                      return proveedores.where(
+                        (p) => p.toLowerCase().contains(q),
+                      );
+                    },
+                    onSelected: (val) {
+                      setState(() => proveedorSeleccionado = val);
+                      buscar(searchController.text);
+                    },
+                    fieldViewBuilder:
+                        (context, controller, focus, onSubmitted) {
+                          return TextField(
+                            controller: controller,
+                            focusNode: focus,
+                            decoration: InputDecoration(
+                              labelText: 'Filtrar por proveedor',
+                              isDense: true,
+                              border: const OutlineInputBorder(),
+                              prefixIcon: const Icon(
+                                Icons.local_shipping_outlined,
+                              ),
+                              suffixIcon: controller.text.isNotEmpty
+                                  ? IconButton(
+                                      icon: const Icon(Icons.clear),
+                                      onPressed: () {
+                                        controller.clear();
+                                        setState(
+                                          () => proveedorSeleccionado = null,
+                                        );
+                                        buscar(searchController.text);
+                                      },
+                                    )
+                                  : null,
+                            ),
+                            onChanged: (val) {
+                              proveedorSeleccionado = val.trim();
+                            },
+                            onSubmitted: (val) {
+                              setState(
+                                () => proveedorSeleccionado = val.trim(),
+                              );
+                              buscar(searchController.text);
+                            },
+                          );
+                        },
+                  ),
               ],
             ),
           ),
+
           if (isLoading)
             const Padding(
               padding: EdgeInsets.all(12),
@@ -558,33 +664,340 @@ class _PedidoAgregarItemScreenState extends State<PedidoAgregarItemScreen> {
                 style: const TextStyle(color: Colors.red),
               ),
             ),
+
           Expanded(
             child: resultados.isEmpty && !isLoading
                 ? const Center(
-                    child: Text("Busca o escanea un producto para agregarlo"),
+                    child: Text("Busca un producto para agregarlo al pedido"),
+                  )
+                : currentList.isEmpty && !isLoading
+                ? const Center(
+                    child: Text(
+                      "Ninguna coincidencia en estos resultados",
+                      style: TextStyle(color: Colors.grey),
+                    ),
                   )
                 : ListView.builder(
-                    itemCount: resultados.length,
-                    itemBuilder: (_, index) {
-                      final item = resultados[index];
+                    padding: const EdgeInsets.all(8),
+                    itemCount: currentList.length,
+                    itemBuilder: (_, i) {
+                      final item = currentList[i];
 
-                      final proveedor =
-                          item["proveedor"]?.toString().trim() ?? "";
+                      final codigo =
+                          item["Codigo"]?.toString() ??
+                          item["codigo"]?.toString() ??
+                          "";
+                      final marca = item["Marca"]?.toString().trim() ?? "-";
+                      final nombreCorregido =
+                          item["Nombre"]?.toString() ??
+                          item["NombreProducto"]?.toString() ??
+                          item["nombre"]?.toString() ??
+                          "Sin nombre";
 
-                      return ListTile(
-                        title: Text(
-                          item["nombre"]?.toString() ?? "Sin nombre",
+                      final stockActual =
+                          double.tryParse(
+                            (item["Stock"] ?? item["stock_actual"] ?? 0)
+                                .toString(),
+                          ) ??
+                          0;
+
+                      final indexCarrito = itemsNuevos.indexWhere(
+                        (c) => c.codigo == codigo,
+                      );
+                      final PedidoItem? pedidoActual = indexCarrito >= 0
+                          ? itemsNuevos[indexCarrito]
+                          : null;
+
+                      final dynamic cantidadPedida =
+                          pedidoActual?.cantidad ?? 0;
+                      final bool estaEnCarrito =
+                          cantidadPedida.toString() != "0" &&
+                          cantidadPedida.toString() != "";
+
+                      final String destino =
+                          pedidoActual?.tipoDestino ?? "VENTA";
+                      final bool tieneNota =
+                          pedidoActual?.notaCompra != null &&
+                          pedidoActual!.notaCompra!.isNotEmpty;
+                      final String unidadActual =
+                          pedidoActual?.unidad ??
+                          (unidadesMedida.isNotEmpty
+                              ? unidadesMedida.first
+                              : 'UNIDADES');
+
+                      return Card(
+                        elevation: estaEnCarrito ? 3 : 1,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(
+                            color: estaEnCarrito
+                                ? Colors.green.shade300
+                                : Colors.grey.shade300,
+                            width: estaEnCarrito ? 2 : 1,
+                          ),
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                        subtitle: Text(
-                          "Código: ${item["codigo"] ?? ""}\n"
-                          "Marca: ${item["marca"] ?? ""} | "
-                          "Stock: ${item["stock_actual"] ?? 0}"
-                          "${proveedor.isNotEmpty ? "\nProveedor: $proveedor" : ""}",
-                        ),
-                        isThreeLine: proveedor.isNotEmpty,
-                        trailing: IconButton(
-                          icon: const Icon(Icons.add),
-                          onPressed: () => agregarProducto(item),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                nombreCorregido,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+
+                              Text(
+                                "Código: $codigo",
+                                style: TextStyle(
+                                  color: Colors.grey.shade700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                "Stock: $stockActual",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blueGrey.shade700,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                "Marca: $marca",
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.blueGrey,
+                                ),
+                              ),
+
+                              const Divider(height: 10),
+
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  // 1. Selector de Cantidad [- N +]
+                                  Container(
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: estaEnCarrito
+                                          ? Colors.green.shade50
+                                          : Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(
+                                        color: estaEnCarrito
+                                            ? Colors.green.shade300
+                                            : Colors.grey.shade300,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: Icon(
+                                            Icons.remove,
+                                            color: estaEnCarrito
+                                                ? Colors.red
+                                                : Colors.grey,
+                                            size: 18,
+                                          ),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 32,
+                                            minHeight: 32,
+                                          ),
+                                          padding: EdgeInsets.zero,
+                                          onPressed: estaEnCarrito
+                                              ? () => _actualizarCantidad(
+                                                  item,
+                                                  -1,
+                                                )
+                                              : null,
+                                        ),
+
+                                        InkWell(
+                                          onTap: () => _editarCantidadManual(
+                                            item,
+                                            pedidoActual,
+                                          ),
+                                          child: Container(
+                                            constraints: const BoxConstraints(
+                                              minWidth: 24,
+                                            ),
+                                            alignment: Alignment.center,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                            ),
+                                            child: Text(
+                                              '$cantidadPedida',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: estaEnCarrito
+                                                    ? Colors.green.shade900
+                                                    : Colors.grey,
+                                                decoration:
+                                                    TextDecoration.underline,
+                                                decorationStyle:
+                                                    TextDecorationStyle.dotted,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+
+                                        IconButton(
+                                          icon: Icon(
+                                            Icons.add,
+                                            color: Colors.green.shade700,
+                                            size: 18,
+                                          ),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 32,
+                                            minHeight: 32,
+                                          ),
+                                          padding: EdgeInsets.zero,
+                                          onPressed: () =>
+                                              _actualizarCantidad(item, 1),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // 2. Stepper de Unidad (< UNIDADES >)
+                                  if (unidadesMedida.isNotEmpty)
+                                    Container(
+                                      height: 32,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade50,
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: Colors.grey.shade300,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.chevron_left,
+                                              size: 18,
+                                              color: Colors.blueGrey,
+                                            ),
+                                            constraints: const BoxConstraints(
+                                              minWidth: 28,
+                                              minHeight: 32,
+                                            ),
+                                            padding: EdgeInsets.zero,
+                                            onPressed:
+                                                unidadesMedida.indexOf(
+                                                      unidadActual,
+                                                    ) >
+                                                    0
+                                                ? () => _ciclarUnidad(
+                                                    item,
+                                                    unidadActual,
+                                                    -1,
+                                                  )
+                                                : null,
+                                          ),
+                                          Text(
+                                            unidadActual,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.blue.shade900,
+                                            ),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.chevron_right,
+                                              size: 18,
+                                              color: Colors.blueGrey,
+                                            ),
+                                            constraints: const BoxConstraints(
+                                              minWidth: 28,
+                                              minHeight: 32,
+                                            ),
+                                            padding: EdgeInsets.zero,
+                                            onPressed:
+                                                unidadesMedida.indexOf(
+                                                      unidadActual,
+                                                    ) <
+                                                    unidadesMedida.length - 1
+                                                ? () => _ciclarUnidad(
+                                                    item,
+                                                    unidadActual,
+                                                    1,
+                                                  )
+                                                : null,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+
+                                  // 3. Destino
+                                  ChoiceChip(
+                                    label: const Text(
+                                      'Venta',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    selected: destino == 'VENTA',
+                                    padding: EdgeInsets.zero,
+                                    labelPadding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                    ),
+                                    selectedColor: Colors.blue.shade100,
+                                    onSelected: (_) =>
+                                        _cambiarDestino(item, 'VENTA'),
+                                  ),
+                                  ChoiceChip(
+                                    label: const Text(
+                                      'Gasto',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    selected: destino == 'GASTO',
+                                    padding: EdgeInsets.zero,
+                                    labelPadding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                    ),
+                                    selectedColor: Colors.orange.shade100,
+                                    onSelected: (_) =>
+                                        _cambiarDestino(item, 'GASTO'),
+                                  ),
+
+                                  // 4. Comentario
+                                  InkWell(
+                                    onTap: () => _agregarNota(item),
+                                    child: CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: tieneNota
+                                          ? Colors.blue.shade100
+                                          : Colors.grey.shade200,
+                                      child: Icon(
+                                        tieneNota
+                                            ? Icons.comment
+                                            : Icons.comment_outlined,
+                                        size: 14,
+                                        color: tieneNota
+                                            ? Colors.blue.shade800
+                                            : Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },
