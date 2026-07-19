@@ -1080,59 +1080,83 @@ class PedidoRepository:
         return float(data.get("total_ventas") or 0) if data else 0.0
 
     # 🔥 NUEVO: Función para obtener el costo más bajo 
-    def get_lowest_cost_provider(self, codigo: str, proveedor: str, meses: int = 3) -> dict[str, Any] | None:
+# 🔥 ACTUALIZADO: Devuelve el proveedor más barato a nivel global y el IVA crudo
+    # 🔥 ACTUALIZADO: Cálculo matemático dinámico del IVA
+    def get_lowest_cost_provider(self, codigo: str, meses: int = 3) -> dict[str, Any] | None:
         fecha_desde = self._restar_meses(date.today(), meses)
         
         query = """
-        SELECT Costo, IVA
+        SELECT NombreProveedor, Costo, IVA
         FROM v_kardexproductos
         WHERE (Codigo = %s OR CodigoBarra = %s)
-          AND LOWER(TRIM(NombreProveedor)) = LOWER(TRIM(%s))
           AND Fecha >= %s
           AND Costo IS NOT NULL AND Costo > 0
-        ORDER BY Costo ASC
+        ORDER BY Costo ASC, Fecha DESC
         LIMIT 1
         """
         
-        row = db.fetch_one(query, (codigo, codigo, proveedor, fecha_desde))
+        row = db.fetch_one(query, (codigo, codigo, fecha_desde))
         if row:
+            costo_base = float(row["Costo"])
+            iva_crudo = str(row["IVA"]).strip().upper() if row["IVA"] is not None else "0"
+            
+            # 1. Intentamos convertir el valor de la columna a un número (ej: "15", "12", "15.00")
+            try:
+                # Quitamos el símbolo '%' por si viene formateado desde la DB
+                iva_porcentaje = float(iva_crudo.replace("%", ""))
+            except ValueError:
+                # Fallback de seguridad: Si la DB tiene un registro antiguo tipo "S" o "SI"
+                if iva_crudo in ["S", "SI", "1", "TRUE", "Y", "YES"]:
+                    iva_porcentaje = 15.0 # Asumimos el estándar actual si no es número
+                else:
+                    iva_porcentaje = 0.0
+            
+            tiene_iva = iva_porcentaje > 0
+            
+            # 2. Ecuación dinámica para el cálculo del Costo Final
+            costo_final = costo_base * (1 + (iva_porcentaje / 100.0))
+            
             return {
-                "costo_minimo": float(row["Costo"]),
-                "tiene_iva": str(row["IVA"]).strip().upper() in ["S", "SI", "1", "TRUE", "Y", "YES"]
+                "proveedor": row["NombreProveedor"],
+                "costo_base": round(costo_base, 4),
+                "costo_final": round(costo_final, 4),
+                "tiene_iva": tiene_iva,
+                # Devolvemos el porcentaje exacto utilizado para que el Frontend lo muestre sin errores
+                "iva_crudo": str(int(iva_porcentaje)) if iva_porcentaje.is_integer() else str(iva_porcentaje) 
             }
         return None
 
-    # 🔥 NUEVO: Función para historial de costos en N meses
-    def get_cost_history_provider(self, codigo: str, proveedor: str, fecha_inicio: date, fecha_fin: date) -> list[dict[str, Any]]:
+    # 🔥 ACTUALIZADO: Historial de costos para TODOS los proveedores
+    def get_cost_history_provider(self, codigo: str, fecha_inicio: date, fecha_fin: date) -> list[dict[str, Any]]:
         query = """
-        SELECT Fecha, Costo, IVA, NombreDocumento
+        SELECT Fecha, Costo, IVA, NombreDocumento, NombreProveedor
         FROM v_kardexproductos
         WHERE (Codigo = %s OR CodigoBarra = %s)
-          AND LOWER(TRIM(NombreProveedor)) = LOWER(TRIM(%s))
           AND Fecha BETWEEN %s AND %s
           AND Costo IS NOT NULL AND Costo > 0
         ORDER BY Fecha DESC
         """
         
-        rows = db.fetch_all(query, (codigo, codigo, proveedor, fecha_inicio, fecha_fin))
+        rows = db.fetch_all(query, (codigo, codigo, fecha_inicio, fecha_fin))
         
         resultado = []
-        ultimo_costo = None
+        ultimo_costo_prov = {} # Para filtrar repetidos pero separando por proveedor
         
         for row in rows:
             costo_actual = float(row["Costo"])
+            prov = row["NombreProveedor"]
             
-            # Filtrar repetidos o variaciones menores a 2 centavos
-            if ultimo_costo is None or abs(costo_actual - ultimo_costo) >= 0.02:
-                # Aseguramos que la fecha sea serializable para JSON
+            # Filtrar repetidos o variaciones menores a 2 centavos POR PROVEEDOR
+            if prov not in ultimo_costo_prov or abs(costo_actual - ultimo_costo_prov[prov]) >= 0.02:
                 fecha_str = row["Fecha"].isoformat() if isinstance(row["Fecha"], date) else row["Fecha"]
                 
                 resultado.append({
                     "fecha": fecha_str,
                     "costo": costo_actual,
-                    "tiene_iva": str(row["IVA"]).strip().upper() in ["S", "SI", "1", "TRUE", "Y", "YES"],
-                    "documento": row["NombreDocumento"]
+                    "iva": str(row["IVA"]).strip() if row["IVA"] is not None else "0",
+                    "documento": row["NombreDocumento"],
+                    "proveedor": prov
                 })
-                ultimo_costo = costo_actual
+                ultimo_costo_prov[prov] = costo_actual
                 
         return resultado

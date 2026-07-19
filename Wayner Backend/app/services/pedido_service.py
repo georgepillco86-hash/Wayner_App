@@ -8,7 +8,6 @@ from typing import Any
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.repositories.pedido_repository import PedidoRepository
-# Importamos el ProductRepository para usar la consulta masiva del Kardex
 from app.repositories.product_repository import ProductRepository
 from app.schemas.pedido import (
     PedidoCreate,
@@ -22,14 +21,12 @@ from app.schemas.pedido import (
     PedidoItemRecepcionUpdate,
 )
 
-# Inicializamos el logger
 logger = logging.getLogger(__name__)
 
 
 class PedidoService:
     def __init__(self, repository: PedidoRepository) -> None:
         self.repository = repository
-        # Instanciamos el repo de productos para el cálculo de VDP
         self.product_repository = ProductRepository()
 
     @staticmethod
@@ -47,9 +44,6 @@ class PedidoService:
             return cantidad
 
     def _inyectar_vdp_dinamico(self, data: list[dict[str, Any]] | dict[str, Any] | None) -> list[dict[str, Any]] | dict[str, Any] | None:
-        """
-        Calcula el stock mínimo (VDP) dinámicamente para el listado de Pedidos.
-        """
         if not data:
             return data
 
@@ -89,10 +83,8 @@ class PedidoService:
             dias_historial = 30
             pvd = ventas_totales / dias_historial if dias_historial > 0 else 0
             
-            # Buscamos el lead time si viene de la DB, si no usamos 7 por defecto
             lead_time = int(item.get("lead_time_dias") or item.get("LeadTime") or 7)
 
-            # Inyectamos en el JSON las variables que Flutter busca
             item["vdp"] = round(pvd, 4)
             item["lead_time_dias"] = lead_time
 
@@ -128,7 +120,6 @@ class PedidoService:
         if proveedor:
             proveedor = proveedor.strip()
 
-        # Obtenemos los productos crudos
         resultados = self.repository.search_products_for_order(
             text=text,
             text2=text2,
@@ -136,7 +127,6 @@ class PedidoService:
             limit=limit,
         )
         
-        # INYECTAMOS EL CÁLCULO AQUÍ ANTES DE ENVIAR A FLUTTER
         return self._inyectar_vdp_dinamico(resultados)
 
     def get_product(self, codigo: str) -> dict[str, Any]:
@@ -145,7 +135,6 @@ class PedidoService:
         if not product:
             raise NotFoundError("Producto no encontrado para pedido")
             
-        # INYECTAMOS TAMBIÉN EN EL PRODUCTO INDIVIDUAL
         return self._inyectar_vdp_dinamico(product)
 
     def create_order(self, payload: PedidoCreate) -> dict[str, Any]:
@@ -398,22 +387,25 @@ class PedidoService:
 
             texto = "\n".join(lineas)
 
-            # 🔥 INYECCIÓN DE COSTOS PARA EL FRONTEND 🔥
+# 🔥 INYECCIÓN DE COSTOS PARA EL FRONTEND 🔥
             items_enriquecidos = []
             for item in items:
                 costo_data = self.repository.get_lowest_cost_provider(
                     codigo=item.get('codigo_producto'), 
-                    proveedor=proveedor_original, 
                     meses=3
                 )
                 
                 item_dict = dict(item)
                 if costo_data:
-                    item_dict["costo_minimo"] = costo_data["costo_minimo"]
+                    item_dict["costo_base"] = costo_data["costo_base"]
+                    item_dict["costo_final"] = costo_data["costo_final"]
                     item_dict["tiene_iva"] = costo_data["tiene_iva"]
+                    item_dict["mejor_proveedor"] = costo_data["proveedor"]
                 else:
-                    item_dict["costo_minimo"] = None
+                    item_dict["costo_base"] = 0.0
+                    item_dict["costo_final"] = 0.0
                     item_dict["tiene_iva"] = False
+                    item_dict["mejor_proveedor"] = None
                     
                 items_enriquecidos.append(item_dict)
 
@@ -474,7 +466,7 @@ class PedidoService:
         if not pedido:
             raise NotFoundError("Pedido no encontrado")
 
-        if pedido.get("estado") != "BORRADOR   ":
+        if pedido.get("estado") != "BORRADOR":
             raise ValidationError("Solo se pueden modificar pedidos en estado BORRADOR")
 
         item = self.repository.get_order_item_by_id(pedido_id, item_id)
@@ -932,24 +924,16 @@ class PedidoService:
         if not product:
             raise NotFoundError("Producto no encontrado para pedido")
 
-        # 1. Obtener egresos históricos
-        # Reemplazar la lectura estática anterior ('get_cantidad_recomendada_producto')
-        # por una consulta de la suma de ventas en los últimos 'N' días.
-        # NOTA: Debes asegurarte de implementar o ajustar este método en el PedidoRepository
-        # para que retorne únicamente la suma total vendida en ese periodo (int o float).
         ventas_totales_periodo = self.repository.get_ventas_historicas_totales(
             codigo=codigo, 
             dias=dias_historial
         )
 
-        # 2. Calcular PVD (Promedio de Ventas Diarias)
         pvd = ventas_totales_periodo / dias_historial if dias_historial > 0 else 0
 
-        # 3. Calcular VDP Dinámico (Punto de Reorden)
         vdp_dinamico_float = ((pvd * factor_estacionalidad) * lead_time) + (pvd * dias_seguridad)
         vdp_dinamico = math.ceil(vdp_dinamico_float)
 
-        # 4. Determinar la cantidad sugerida a pedir
         stock_actual = self._normalizar_cantidad(product.get("stock_actual") or 0)
 
         cantidad_a_pedir = 0
@@ -969,11 +953,8 @@ class PedidoService:
             }
         }
     
-    def get_historial_costos(self, codigo: str, proveedor: str, meses: int = 5) -> list[dict]:
-        codigo = self._validate_text(codigo, "El código")
-        proveedor = self._validate_text(proveedor, "El proveedor")
-        
-        fecha_fin = datetime.now().date()
-        fecha_inicio = self.repository._restar_meses(fecha_fin, meses)
-        
-        return self.repository.get_cost_history_provider(codigo, proveedor, fecha_inicio, fecha_fin)
+    def get_historial_costos(self, codigo: str, meses: int) -> list[dict[str, Any]]:
+        fecha_inicio = self.repository._restar_meses(date.today(), meses)
+        fecha_fin = date.today()
+        # Ya no pasamos proveedor
+        return self.repository.get_cost_history_provider(codigo, fecha_inicio, fecha_fin)

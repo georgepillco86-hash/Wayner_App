@@ -100,11 +100,10 @@ def get_cantidad_recomendada_producto(codigo: str):
 @router.get("/producto/{codigo}/historial-costos")
 def obtener_historial_costos(
     codigo: str, 
-    proveedor: str = Query(..., min_length=1), 
     meses: int = Query(default=5, ge=1, le=24),
 ):
     return ok(
-        service.get_historial_costos(codigo, proveedor, meses),
+        service.get_historial_costos(codigo, meses),
         "Historial de costos obtenido exitosamente"
     )
 
@@ -436,3 +435,7 @@ def marcar_pedido_recibido(
         data,
         "Pedido marcado como recibido exitosamente"
     )
+
+@router.get("/producto/{codigo}/mejor-costo")
+def obtener_mejor_costo(codigo: str, meses: int = Query(default=3, ge=1, le=12)):
+     return ok(service.repository.get_lowest_cost_provider(codigo, meses=meses), "Mejor costo")
