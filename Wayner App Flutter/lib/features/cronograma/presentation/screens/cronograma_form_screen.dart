@@ -24,6 +24,8 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
   final _usuariosService = UsuariosService();
 
   final _proveedorController = TextEditingController();
+  final _celularController =
+      TextEditingController(); // 🔥 NUEVO: Controlador para el WhatsApp
   String? _proveedorSeleccionado;
 
   // ---> MODIFICADO: Frecuencia ahora es tipo String para empalmar con el Backend
@@ -58,6 +60,7 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
   @override
   void dispose() {
     _proveedorController.dispose();
+    _celularController.dispose(); // 🔥 NUEVO: Dispose del controlador
     super.dispose();
   }
 
@@ -182,6 +185,8 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
 
   Future<void> _guardar() async {
     final nombreProveedor = _proveedorController.text.trim();
+    // Aquí puedes capturar el celular si necesitas mandarlo al backend más adelante
+    // final numeroCelular = _celularController.text.trim();
 
     if (nombreProveedor.isEmpty || _usuariosVinculados.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -270,6 +275,19 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                   ),
                   const SizedBox(height: 16),
 
+                  // 🔥 NUEVO: Campo de Contacto Celular para los reportes de WhatsApp
+                  TextFormField(
+                    controller: _celularController,
+                    decoration: const InputDecoration(
+                      labelText: "Contacto Celular (WhatsApp)",
+                      prefixIcon: Icon(Icons.phone_android),
+                      border: OutlineInputBorder(),
+                      hintText: "Ej: 0991234567",
+                    ),
+                    keyboardType: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 16),
+
                   // --- SECCIÓN 2: FRECUENCIA Y DURACIÓN (PARALELOS) ---
                   Row(
                     children: [
@@ -282,12 +300,15 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                           ),
                           items: _opcionesFrecuencia.map((frec) {
                             String label = frec;
-                            if (frec == 'Mensual')
+                            if (frec == 'Mensual') {
                               label = '1 vez al mes (Mensual)';
-                            if (frec == 'Quincenal')
+                            }
+                            if (frec == 'Quincenal') {
                               label = '2 veces al mes (Quincenal)';
-                            if (frec == 'Semanal')
+                            }
+                            if (frec == 'Semanal') {
                               label = '4 veces al mes (Semanal)';
+                            }
                             return DropdownMenuItem(
                               value: frec,
                               child: Text(label),

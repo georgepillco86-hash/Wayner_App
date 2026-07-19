@@ -3,14 +3,12 @@ import 'package:flutter/services.dart';
 
 import '../services/pedidos_service.dart';
 import 'pedido_agregar_item_screen.dart';
+import '../widgets/generar_pedido_proveedor_dialog.dart'; // 🔥 Nueva importación
 
 class AdminPedidoDetalleScreen extends StatefulWidget {
   final int pedidoId;
 
-  const AdminPedidoDetalleScreen({
-    super.key,
-    required this.pedidoId,
-  });
+  const AdminPedidoDetalleScreen({super.key, required this.pedidoId});
 
   @override
   State<AdminPedidoDetalleScreen> createState() =>
@@ -21,11 +19,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
   final PedidosService service = PedidosService();
 
   bool isLoading = true;
-  bool isLoadingTexto = false;
   String? errorMessage;
 
   Map<String, dynamic>? pedido;
-  Map<String, dynamic>? textosProveedor;
 
   List<String> unidadesMedida = ['UNIDADES'];
 
@@ -100,9 +96,7 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
     final agregado = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => PedidoAgregarItemScreen(
-          pedidoId: widget.pedidoId,
-        ),
+        builder: (_) => PedidoAgregarItemScreen(pedidoId: widget.pedidoId),
       ),
     );
 
@@ -115,9 +109,7 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
     final cantidadActual =
         int.tryParse(item["cantidad_pedida"].toString()) ?? 1;
 
-    final controller = TextEditingController(
-      text: cantidadActual.toString(),
-    );
+    final controller = TextEditingController(text: cantidadActual.toString());
 
     final confirmado = await showDialog<bool>(
       context: context,
@@ -160,9 +152,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Cantidad actualizada")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Cantidad actualizada")));
 
       await cargarDetalle();
     } catch (e) {
@@ -179,8 +171,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
         item["unidad"]?.toString().trim().toUpperCase() ?? "UNIDADES";
 
     if (!unidadesMedida.contains(unidadSeleccionada)) {
-      unidadSeleccionada =
-          unidadesMedida.isNotEmpty ? unidadesMedida.first : "UNIDADES";
+      unidadSeleccionada = unidadesMedida.isNotEmpty
+          ? unidadesMedida.first
+          : "UNIDADES";
     }
 
     final confirmado = await showDialog<bool>(
@@ -336,9 +329,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Destino actualizado")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Destino actualizado")));
 
       await cargarDetalle();
     } catch (e) {
@@ -449,9 +442,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Producto eliminado")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Producto eliminado")));
 
       await cargarDetalle();
     } catch (e) {
@@ -460,32 +453,6 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("No se pudo eliminar el producto")),
       );
-    }
-  }
-
-  Future<void> cargarTextosProveedor() async {
-    setState(() {
-      isLoadingTexto = true;
-    });
-
-    try {
-      final data = await service.obtenerTextoPorProveedor(widget.pedidoId);
-
-      setState(() {
-        textosProveedor = data;
-      });
-
-      if (!mounted) return;
-
-      mostrarTextosProveedor();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No se pudo generar el texto")),
-      );
-    } finally {
-      setState(() {
-        isLoadingTexto = false;
-      });
     }
   }
 
@@ -527,9 +494,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Estado cambiado a $nuevoEstado")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Estado cambiado a $nuevoEstado")));
 
       await cargarDetalle();
     } catch (e) {
@@ -547,9 +514,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
     final proveedorActual = item["proveedor"]?.toString() ?? "SIN PROVEEDOR";
 
     if (codigo.isEmpty || itemId <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Producto sin código o ID")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Producto sin código o ID")));
       return;
     }
 
@@ -618,7 +585,7 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
 
                                 final yaSeleccionado =
                                     proveedor.trim().toUpperCase() ==
-                                        proveedorActual.trim().toUpperCase();
+                                    proveedorActual.trim().toUpperCase();
 
                                 String etiqueta = "";
 
@@ -668,8 +635,8 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
                                                     Padding(
                                                       padding:
                                                           const EdgeInsets.only(
-                                                        top: 6,
-                                                      ),
+                                                            top: 6,
+                                                          ),
                                                       child: Text(
                                                         etiqueta,
                                                         style: TextStyle(
@@ -696,11 +663,12 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
                                                     try {
                                                       await service
                                                           .actualizarProveedorItemPedido(
-                                                        pedidoId:
-                                                            widget.pedidoId,
-                                                        itemId: itemId,
-                                                        proveedor: proveedor,
-                                                      );
+                                                            pedidoId:
+                                                                widget.pedidoId,
+                                                            itemId: itemId,
+                                                            proveedor:
+                                                                proveedor,
+                                                          );
 
                                                       if (!mounted) return;
 
@@ -763,271 +731,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
       Navigator.pop(context);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("No se pudo obtener el mejor proveedor"),
-        ),
+        const SnackBar(content: Text("No se pudo obtener el mejor proveedor")),
       );
     }
-  }
-
-  List<dynamic> obtenerItemsProveedorFiltrados({
-    required String proveedor,
-    required String filtro,
-  }) {
-    final items = pedido?["items"] ?? [];
-
-    return items.where((item) {
-      final proveedorItem = item["proveedor"] == null ||
-              item["proveedor"].toString().trim().isEmpty
-          ? "SIN PROVEEDOR"
-          : item["proveedor"].toString().trim();
-
-      final tipoDestino = obtenerTipoDestino(item);
-
-      final coincideProveedor = proveedorItem == proveedor;
-      final coincideFiltro = filtro == "TODOS" || tipoDestino == filtro;
-
-      return coincideProveedor && coincideFiltro;
-    }).toList();
-  }
-
-  String construirTextoProveedorFiltrado({
-    required String proveedor,
-    required String filtro,
-  }) {
-    final itemsProveedor = obtenerItemsProveedorFiltrados(
-      proveedor: proveedor,
-      filtro: filtro,
-    );
-
-    final productosVenta = itemsProveedor
-        .where((item) => obtenerTipoDestino(item) == "VENTA")
-        .toList();
-
-    final productosGasto = itemsProveedor
-        .where((item) => obtenerTipoDestino(item) == "GASTO")
-        .toList();
-
-    String texto = "Hola, buen día.\n\n";
-    texto += "Por favor ayudarme con el siguiente pedido:\n\n";
-
-    if (productosVenta.isNotEmpty) {
-      texto += "🛒 PRODUCTOS PARA VENTA:\n\n";
-
-      for (final item in productosVenta) {
-        texto += "- ${item["nombre_producto"] ?? "Producto sin nombre"}\n";
-        texto += "  Código: ${item["codigo_producto"] ?? ""}\n";
-        texto +=
-            "  Cantidad: ${item["cantidad_pedida"] ?? 0} ${item["unidad"] ?? "UNIDADES"}\n";
-
-        if (item["nota_compra"] != null &&
-            item["nota_compra"].toString().trim().isNotEmpty) {
-          texto += "  Nota de compra: ${item["nota_compra"]}\n";
-        }
-
-        texto += "\n";
-      }
-    }
-
-    if (productosGasto.isNotEmpty) {
-      texto += "🔥 PRODUCTOS PARA GASTO / CONSUMO INTERNO:\n\n";
-
-      for (final item in productosGasto) {
-        texto += "- ${item["nombre_producto"] ?? "Producto sin nombre"}\n";
-        texto += "  Código: ${item["codigo_producto"] ?? ""}\n";
-        texto +=
-            "  Cantidad: ${item["cantidad_pedida"] ?? 0} ${item["unidad"] ?? "UNIDADES"}\n";
-
-        if (item["nota_compra"] != null &&
-            item["nota_compra"].toString().trim().isNotEmpty) {
-          texto += "  Nota de compra: ${item["nota_compra"]}\n";
-        }
-
-        texto += "\n";
-      }
-    }
-
-    texto += "Gracias.";
-
-    return texto;
-  }
-
-  void mostrarTextosProveedor() {
-    final textos = textosProveedor?["textos"] ?? [];
-    String filtroSeleccionado = "TODOS";
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final textosFiltrados = textos.where((item) {
-              final proveedor =
-                  item["proveedor"]?.toString() ?? "SIN PROVEEDOR";
-
-              final itemsFiltrados = obtenerItemsProveedorFiltrados(
-                proveedor: proveedor,
-                filtro: filtroSeleccionado,
-              );
-
-              return itemsFiltrados.isNotEmpty;
-            }).toList();
-
-            return SafeArea(
-              child: SizedBox(
-                height: MediaQuery.of(context).size.height * 0.85,
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            "Generar pedido por proveedor",
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              ChoiceChip(
-                                label: const Text("Todos"),
-                                selected: filtroSeleccionado == "TODOS",
-                                onSelected: (_) {
-                                  setModalState(() {
-                                    filtroSeleccionado = "TODOS";
-                                  });
-                                },
-                              ),
-                              ChoiceChip(
-                                label: const Text("Venta"),
-                                avatar: const Icon(
-                                  Icons.shopping_cart,
-                                  size: 18,
-                                ),
-                                selected: filtroSeleccionado == "VENTA",
-                                selectedColor: Colors.blue.shade100,
-                                onSelected: (_) {
-                                  setModalState(() {
-                                    filtroSeleccionado = "VENTA";
-                                  });
-                                },
-                              ),
-                              ChoiceChip(
-                                label: const Text("Gasto"),
-                                avatar: const Icon(
-                                  Icons.local_fire_department,
-                                  size: 18,
-                                ),
-                                selected: filtroSeleccionado == "GASTO",
-                                selectedColor: Colors.orange.shade100,
-                                onSelected: (_) {
-                                  setModalState(() {
-                                    filtroSeleccionado = "GASTO";
-                                  });
-                                },
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(),
-                    Expanded(
-                      child: textosFiltrados.isEmpty
-                          ? const Center(
-                              child: Text(
-                                "No hay productos para el filtro seleccionado",
-                              ),
-                            )
-                          : ListView.builder(
-                              padding: const EdgeInsets.all(12),
-                              itemCount: textosFiltrados.length,
-                              itemBuilder: (context, index) {
-                                final item = textosFiltrados[index];
-                                final proveedor =
-                                    item["proveedor"]?.toString() ??
-                                        "SIN PROVEEDOR";
-
-                                final itemsFiltrados =
-                                    obtenerItemsProveedorFiltrados(
-                                  proveedor: proveedor,
-                                  filtro: filtroSeleccionado,
-                                );
-
-                                final texto = construirTextoProveedorFiltrado(
-                                  proveedor: proveedor,
-                                  filtro: filtroSeleccionado,
-                                );
-
-                                return Card(
-                                  margin: const EdgeInsets.only(bottom: 12),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(14),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          proveedor,
-                                          style: const TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          "Items: ${itemsFiltrados.length}",
-                                        ),
-                                        Text(
-                                          "Filtro: ${filtroSeleccionado == "TODOS" ? "Todos" : filtroSeleccionado}",
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        const Divider(),
-                                        SelectableText(texto),
-                                        const SizedBox(height: 10),
-                                        Align(
-                                          alignment: Alignment.centerRight,
-                                          child: ElevatedButton.icon(
-                                            onPressed: () {
-                                              Clipboard.setData(
-                                                ClipboardData(text: texto),
-                                              );
-
-                                              ScaffoldMessenger.of(context)
-                                                  .showSnackBar(
-                                                const SnackBar(
-                                                  content: Text("Texto copiado"),
-                                                ),
-                                              );
-                                            },
-                                            icon: const Icon(Icons.copy),
-                                            label: const Text("Copiar"),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   Widget buildTipoDestinoBadge(dynamic item) {
@@ -1047,7 +753,9 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            esGasto ? Icons.local_fire_department : Icons.shopping_cart,
+            esGasto
+                ? Icons.local_fire_department
+                : Icons.shopping_cart_outlined,
             size: 14,
             color: esGasto ? Colors.orange.shade900 : Colors.blue.shade900,
           ),
@@ -1070,18 +778,26 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
     return fecha.toString().replaceAll("T", " ").split(".").first;
   }
 
+  // 🔥 Invoca el nuevo Widget de Costos
+  void _mostrarDialogoProveedor() {
+    showDialog(
+      context: context,
+      builder: (context) =>
+          GenerarPedidoProveedorDialog(pedidoId: widget.pedidoId),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = pedido?["items"] ?? [];
+    final String usuario = pedido?["usuario"]?.toString() ?? "Desconocido";
 
     return Scaffold(
+      backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
         title: Text("Admin Pedido #${widget.pedidoId}"),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: cargarDetalle,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: cargarDetalle),
           IconButton(
             icon: const Icon(Icons.edit),
             tooltip: "Cambiar estado del pedido",
@@ -1098,100 +814,105 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorMessage != null
-              ? Center(child: Text(errorMessage!))
-              : pedido == null
-                  ? const Center(child: Text("Pedido no encontrado"))
-                  : ListView(
-                      padding: const EdgeInsets.all(12),
-                      children: [
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "Pedido #${pedido!["id"]}",
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text("Usuario: ${pedido!["usuario"] ?? ""}"),
-                                Text("Estado: ${pedido!["estado"] ?? ""}"),
-                                Text(
-                                  "Fecha: ${formatearFecha(pedido!["fecha_creacion"])}",
-                                ),
-                                if (pedido!["observacion"] != null)
-                                  Text("Observación: ${pedido!["observacion"]}"),
-                                if (pedidoEditable) ...[
-                                  const SizedBox(height: 10),
-                                  const Text(
-                                    "Este pedido puede ser editado porque está en estado ENVIADO.",
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
+          ? Center(child: Text(errorMessage!))
+          : pedido == null
+          ? const Center(child: Text("Pedido no encontrado"))
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Orden de pedido #${pedido!['id']}",
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
                         ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed:
-                                isLoadingTexto ? null : cargarTextosProveedor,
-                            icon: isLoadingTexto
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.business),
-                            label: Text(
-                              isLoadingTexto
-                                  ? "Generando..."
-                                  : "Generar pedido por proveedor",
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
+                      ),
+                      const SizedBox(height: 8),
+                      Text("Usuario: $usuario"),
+                      Text("Estado: ${pedido!['estado'] ?? 'SIN ESTADO'}"),
+                      Text(
+                        "Fecha: ${formatearFecha(pedido!['fecha_creacion'])}",
+                      ),
+                      if (pedido!['observacion'] != null &&
+                          pedido!['observacion'].toString().isNotEmpty)
+                        Text("Observación: ${pedido!['observacion']}"),
+                      if (pedidoEditable) ...[
+                        const SizedBox(height: 10),
                         const Text(
-                          "Productos del pedido",
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                          "Este pedido puede ser editado porque está en estado BORRADOR.",
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _mostrarDialogoProveedor,
+                          icon: const Icon(Icons.domain),
+                          label: const Text("Generar pedido por proveedor"),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            backgroundColor: Colors.blue.shade50,
+                            side: BorderSide(color: Colors.blue.shade200),
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        if (items.isEmpty)
-                          const Card(
-                            child: Padding(
-                              padding: EdgeInsets.all(14),
-                              child: Text("Este pedido no tiene productos"),
-                            ),
-                          )
-                        else
-                          ...items.asMap().entries.map((entry) {
-                            final index = entry.key;
-                            final item = entry.value;
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 8.0,
+                  ),
+                  child: Text(
+                    "Productos del pedido",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Expanded(
+                  child: items.isEmpty
+                      ? const Center(
+                          child: Text("Este pedido no tiene productos"),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.only(bottom: 20),
+                          itemCount: items.length,
+                          itemBuilder: (context, index) {
+                            final item = items[index];
+                            final numItem = index + 1;
 
                             return Card(
-                              margin: const EdgeInsets.only(bottom: 8),
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
                               child: ListTile(
                                 leading: CircleAvatar(
-                                  child: Text("${index + 1}"),
+                                  backgroundColor: Colors.lightBlue.shade100,
+                                  child: Text(
+                                    '$numItem',
+                                    style: TextStyle(
+                                      color: Colors.blue.shade900,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ),
                                 title: Text(
-                                  item["nombre_producto"]?.toString() ??
-                                      "Producto sin nombre",
+                                  item['nombre_producto']?.toString() ??
+                                      'Sin nombre',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
+                                    fontSize: 14,
                                   ),
                                 ),
                                 subtitle: Padding(
@@ -1203,14 +924,14 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
                                       buildTipoDestinoBadge(item),
                                       const SizedBox(height: 6),
                                       Text(
-                                        "Código: ${item["codigo_producto"] ?? ""}",
+                                        "Código: ${item['codigo_producto']}",
                                       ),
-                                      Text("Marca: ${item["marca"] ?? ""}"),
+                                      Text("Marca: ${item['marca'] ?? '-'}"),
                                       Text(
-                                        "Proveedor: ${item["proveedor"] ?? "SIN PROVEEDOR"}",
+                                        "Proveedor: ${item['proveedor'] ?? '-'}",
                                       ),
                                       Text(
-                                        "Cantidad: ${item["cantidad_pedida"] ?? 0} ${item["unidad"] ?? "UNIDADES"}",
+                                        "Cantidad: ${item['cantidad_pedida']} ${item['unidad'] ?? 'UNIDADES'}",
                                       ),
                                       if (item["nota_compra"] != null &&
                                           item["nota_compra"]
@@ -1259,20 +980,29 @@ class _AdminPedidoDetalleScreenState extends State<AdminPedidoDetalleScreen> {
                                           ),
                                           PopupMenuItem(
                                             value: "nota",
-                                            child: Text("Editar nota de compra"),
+                                            child: Text(
+                                              "Editar nota de compra",
+                                            ),
                                           ),
                                           PopupMenuItem(
                                             value: "eliminar",
-                                            child: Text("Eliminar producto"),
+                                            child: Text(
+                                              "Eliminar producto",
+                                              style: TextStyle(
+                                                color: Colors.red,
+                                              ),
+                                            ),
                                           ),
                                         ],
                                       )
                                     : null,
                               ),
                             );
-                          }).toList(),
-                      ],
-                    ),
+                          },
+                        ),
+                ),
+              ],
+            ),
     );
   }
 }

@@ -195,6 +195,55 @@ class PedidosService {
     throw Exception("Error al obtener texto por proveedor");
   }
 
+  // 🔥 NUEVO: Requerido por el GenerarPedidoProveedorDialog (Mismo endpoint que arriba)
+  Future<Map<String, dynamic>> obtenerTextosProveedor(int pedidoId) async {
+    final response = await http.get(
+      Uri.parse("$baseUrl/$pedidoId/proveedores-texto"),
+      headers: await AuthHeaders.plain(),
+    );
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
+      return json["data"] ?? {};
+    }
+
+    throw Exception("Error al obtener los textos del proveedor");
+  }
+
+  // 🔥 NUEVO: Requerido por el GenerarPedidoProveedorDialog para ver los costos
+  // 🔥 NUEVO: Requerido por el GenerarPedidoProveedorDialog para ver los costos
+  // Se quitaron las llaves {} de 'meses' para que acepte el 3er argumento posicional
+  Future<List<dynamic>> obtenerHistorialCostos(String codigo, int meses) async {
+    final uri = Uri.parse(
+      "$baseUrl/producto/$codigo/historial-costos",
+    ).replace(queryParameters: {"meses": meses.toString()});
+
+    final response = await http.get(uri, headers: await AuthHeaders.plain());
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
+      return json["data"] ?? [];
+    }
+
+    throw Exception("Error al obtener el historial de costos");
+  }
+
+  Future<Map<String, dynamic>?> obtenerMejorCostoGlobal(
+    String codigo, {
+    int meses = 3,
+  }) async {
+    final response = await http.get(
+      Uri.parse("$baseUrl/producto/$codigo/mejor-costo?meses=$meses"),
+      headers: await AuthHeaders.plain(),
+    );
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
+      return json["data"];
+    }
+    return null;
+  }
+
   Future<Map<String, dynamic>> agregarItemPedido({
     required int pedidoId,
     required String codigoProducto,
