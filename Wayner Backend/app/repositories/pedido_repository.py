@@ -1080,40 +1080,46 @@ class PedidoRepository:
         return float(data.get("total_ventas") or 0) if data else 0.0
 
     # 🔥 NUEVO: Función para obtener el costo más bajo 
-# 🔥 ACTUALIZADO: Devuelve el proveedor más barato a nivel global y el IVA crudo
-    # 🔥 ACTUALIZADO: Cálculo matemático dinámico del IVA
+# 🔥 1. MEJOR COSTO: Filtro estricto de compras y búsqueda sin límite de tiempo
     def get_lowest_cost_provider(self, codigo: str, meses: int = 3) -> dict[str, Any] | None:
         fecha_desde = self._restar_meses(date.today(), meses)
         
+        # Intento 1: Buscar en los últimos meses (SOLO FACTURAS DE COMPRA)
         query = """
-        SELECT NombreProveedor, Costo, IVA
+        SELECT NombreProveedor, Costo, IVA, Fecha
         FROM v_kardexproductos
         WHERE (Codigo = %s OR CodigoBarra = %s)
+          AND NombreDocumento LIKE '%%FACTURA DE COMPRA%%'
           AND Fecha >= %s
           AND Costo IS NOT NULL AND Costo > 0
         ORDER BY Costo ASC, Fecha DESC
         LIMIT 1
         """
-        
         row = db.fetch_one(query, (codigo, codigo, fecha_desde))
+
+        # Intento 2 (Fallback): Si no hay compras recientes, buscar la MÁS RECIENTE en toda la historia
+        if not row:
+            query_fallback = """
+            SELECT NombreProveedor, Costo, IVA, Fecha
+            FROM v_kardexproductos
+            WHERE (Codigo = %s OR CodigoBarra = %s)
+              AND NombreDocumento LIKE '%%FACTURA DE COMPRA%%'
+              AND Costo IS NOT NULL AND Costo > 0
+            ORDER BY Fecha DESC
+            LIMIT 1
+            """
+            row = db.fetch_one(query_fallback, (codigo, codigo))
+
         if row:
             costo_base = float(row["Costo"])
             iva_crudo = str(row["IVA"]).strip().upper() if row["IVA"] is not None else "0"
             
-            # 1. Intentamos convertir el valor de la columna a un número (ej: "15", "12", "15.00")
             try:
-                # Quitamos el símbolo '%' por si viene formateado desde la DB
                 iva_porcentaje = float(iva_crudo.replace("%", ""))
             except ValueError:
-                # Fallback de seguridad: Si la DB tiene un registro antiguo tipo "S" o "SI"
-                if iva_crudo in ["S", "SI", "1", "TRUE", "Y", "YES"]:
-                    iva_porcentaje = 15.0 # Asumimos el estándar actual si no es número
-                else:
-                    iva_porcentaje = 0.0
+                iva_porcentaje = 15.0 if iva_crudo in ["S", "SI", "1", "TRUE", "Y", "YES"] else 0.0
             
             tiene_iva = iva_porcentaje > 0
-            
-            # 2. Ecuación dinámica para el cálculo del Costo Final
             costo_final = costo_base * (1 + (iva_porcentaje / 100.0))
             
             return {
@@ -1121,42 +1127,52 @@ class PedidoRepository:
                 "costo_base": round(costo_base, 4),
                 "costo_final": round(costo_final, 4),
                 "tiene_iva": tiene_iva,
-                # Devolvemos el porcentaje exacto utilizado para que el Frontend lo muestre sin errores
                 "iva_crudo": str(int(iva_porcentaje)) if iva_porcentaje.is_integer() else str(iva_porcentaje) 
             }
         return None
 
-    # 🔥 ACTUALIZADO: Historial de costos para TODOS los proveedores
-    def get_cost_history_provider(self, codigo: str, fecha_inicio: date, fecha_fin: date) -> list[dict[str, Any]]:
+    # 🔥 2. HISTORIAL: Filtro estricto de compras y cálculo del costo final (neto)
+    def get_cost_history_provider(self, codigo: str) -> list[dict[str, Any]]:
+        # Sin límite de meses para asegurar que traiga los datos antiguos si es necesario
         query = """
         SELECT Fecha, Costo, IVA, NombreDocumento, NombreProveedor
         FROM v_kardexproductos
         WHERE (Codigo = %s OR CodigoBarra = %s)
-          AND Fecha BETWEEN %s AND %s
+          AND NombreDocumento LIKE '%%FACTURA DE COMPRA%%'
           AND Costo IS NOT NULL AND Costo > 0
         ORDER BY Fecha DESC
+        LIMIT 50
         """
-        
-        rows = db.fetch_all(query, (codigo, codigo, fecha_inicio, fecha_fin))
+        rows = db.fetch_all(query, (codigo, codigo))
         
         resultado = []
-        ultimo_costo_prov = {} # Para filtrar repetidos pero separando por proveedor
+        ultimo_costo_prov = {} 
         
         for row in rows:
-            costo_actual = float(row["Costo"])
+            costo_base = float(row["Costo"])
             prov = row["NombreProveedor"]
             
-            # Filtrar repetidos o variaciones menores a 2 centavos POR PROVEEDOR
-            if prov not in ultimo_costo_prov or abs(costo_actual - ultimo_costo_prov[prov]) >= 0.02:
+            iva_crudo = str(row["IVA"]).strip().upper() if row["IVA"] is not None else "0"
+            try:
+                iva_porcentaje = float(iva_crudo.replace("%", ""))
+            except ValueError:
+                iva_porcentaje = 15.0 if iva_crudo in ["S", "SI", "1", "TRUE", "Y", "YES"] else 0.0
+
+            # Calculamos el costo con IVA incluido
+            costo_final = costo_base * (1 + (iva_porcentaje / 100.0))
+            
+            if prov not in ultimo_costo_prov or abs(costo_base - ultimo_costo_prov[prov]) >= 0.02:
                 fecha_str = row["Fecha"].isoformat() if isinstance(row["Fecha"], date) else row["Fecha"]
                 
                 resultado.append({
                     "fecha": fecha_str,
-                    "costo": costo_actual,
-                    "iva": str(row["IVA"]).strip() if row["IVA"] is not None else "0",
+                    "costo_base": round(costo_base, 4),
+                    "costo_final": round(costo_final, 4),
+                    "tiene_iva": iva_porcentaje > 0,
+                    "iva_porcentaje": str(int(iva_porcentaje)) if iva_porcentaje.is_integer() else str(iva_porcentaje),
                     "documento": row["NombreDocumento"],
                     "proveedor": prov
                 })
-                ultimo_costo_prov[prov] = costo_actual
+                ultimo_costo_prov[prov] = costo_base
                 
         return resultado

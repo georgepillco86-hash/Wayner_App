@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from collections import defaultdict
 from typing import Any
 
@@ -387,7 +387,7 @@ class PedidoService:
 
             texto = "\n".join(lineas)
 
-# 🔥 INYECCIÓN DE COSTOS PARA EL FRONTEND 🔥
+            # 🔥 INYECCIÓN DE COSTOS PARA EL FRONTEND 🔥
             items_enriquecidos = []
             for item in items:
                 costo_data = self.repository.get_lowest_cost_provider(
@@ -954,7 +954,5 @@ class PedidoService:
         }
     
     def get_historial_costos(self, codigo: str, meses: int) -> list[dict[str, Any]]:
-        fecha_inicio = self.repository._restar_meses(date.today(), meses)
-        fecha_fin = date.today()
-        # Ya no pasamos proveedor
-        return self.repository.get_cost_history_provider(codigo, fecha_inicio, fecha_fin)
+        # Ya no filtramos por fecha aquí para permitir historiales antiguos si no hay recientes
+        return self.repository.get_cost_history_provider(codigo)
