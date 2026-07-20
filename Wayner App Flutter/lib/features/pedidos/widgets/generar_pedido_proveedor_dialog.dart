@@ -1,11 +1,9 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // 🔥 NUEVO IMPORT
 import '../services/pedidos_service.dart';
 
 class GenerarPedidoProveedorDialog extends StatefulWidget {
@@ -30,8 +28,8 @@ class _GenerarPedidoProveedorDialogState
   String filtroSeleccionado = "TODOS";
   Map<String, Map<String, dynamic>?> costosCache = {};
 
-  // Controladores para los números de WhatsApp por proveedor
-  final Map<String, TextEditingController> _celularControllers = {};
+  Set<String> proveedoresEnviados = {};
+  SharedPreferences? _prefs; // 🔥 Referencia a la caché
 
   @override
   void initState() {
@@ -46,6 +44,12 @@ class _GenerarPedidoProveedorDialogState
     });
 
     try {
+      // 🔥 Cargamos la caché local
+      _prefs = await SharedPreferences.getInstance();
+      final guardados =
+          _prefs?.getStringList('pedido_${widget.pedidoId}_sent') ?? [];
+      proveedoresEnviados = guardados.toSet();
+
       final dataPedido = await service.obtenerDetallePedidoAdmin(
         widget.pedidoId,
       );
@@ -94,17 +98,346 @@ class _GenerarPedidoProveedorDialogState
     return "${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}";
   }
 
-  // 🔥 Lógica de Generación de PDF 🔥
-  Future<void> _generarYCompartirPDF(
+  Future<void> _autoMarcarComoEnviado() async {
+    final estadoActual = pedido?["estado"]?.toString().toUpperCase();
+    if (estadoActual != "ENVIADO" && estadoActual != "RECIBIDO") {
+      try {
+        await service.actualizarEstadoPedido(
+          pedidoId: widget.pedidoId,
+          estado: "ENVIADO",
+        );
+
+        if (mounted) {
+          setState(() {
+            pedido?["estado"] = "ENVIADO";
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "✅ Todos los pedidos enviados. Orden marcada como ENVIADA.",
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        debugPrint("Error al auto-actualizar estado: $e");
+      }
+    }
+  }
+
+  Color _getColorPorEstado(String? estado) {
+    switch (estado?.toUpperCase()) {
+      case 'BORRADOR':
+        return Colors.orange;
+      case 'ENVIADO':
+        return Colors.blue;
+      case 'RECIBIDO':
+        return Colors.green;
+      case 'CANCELADO':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Future<void> _cambiarProveedor(dynamic itemInfo) async {
+    final codigo = itemInfo["codigo_producto"]?.toString() ?? "";
+
+    final itemsPedidoOriginal = pedido?["items"] as List<dynamic>? ?? [];
+    final itemReal = itemsPedidoOriginal.firstWhere(
+      (i) => i["codigo_producto"]?.toString() == codigo,
+      orElse: () => {},
+    );
+
+    final itemIdStr = itemReal["id"]?.toString() ?? "0";
+    final itemId = int.tryParse(itemIdStr) ?? 0;
+
+    if (codigo.isEmpty || itemId == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Error: No se pudo identificar el ID del producto en el pedido.",
+          ),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final proveedores = await service.obtenerProveedoresProducto(codigo);
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      if (proveedores.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "No se encontraron otros proveedores para este producto.",
+            ),
+          ),
+        );
+        return;
+      }
+
+      showModalBottomSheet(
+        context: context,
+        builder: (_) {
+          return Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16.0),
+                child: Text(
+                  "Seleccionar Nuevo Destino",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: proveedores.length,
+                  itemBuilder: (context, index) {
+                    final p = proveedores[index];
+                    final nombreProv =
+                        p["proveedor"]?.toString() ?? "Sin nombre";
+
+                    return ListTile(
+                      leading: const Icon(Icons.swap_horiz, color: Colors.blue),
+                      title: Text(nombreProv),
+                      onTap: () async {
+                        Navigator.pop(context);
+                        try {
+                          await service.actualizarProveedorItemPedido(
+                            pedidoId: widget.pedidoId,
+                            itemId: itemId,
+                            proveedor: nombreProv,
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                "Proveedor actualizado exitosamente.",
+                              ),
+                            ),
+                          );
+                          // Si cambiamos un proveedor, reiniciamos el tracking local para evitar bugs
+                          proveedoresEnviados.clear();
+                          if (_prefs != null) {
+                            await _prefs!.remove(
+                              'pedido_${widget.pedidoId}_sent',
+                            );
+                          }
+                          _cargarTodo();
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text("Error al actualizar proveedor."),
+                            ),
+                          );
+                        }
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Error al obtener proveedores.")),
+      );
+    }
+  }
+
+  void _verHistorial(String codigo, String nombreProducto) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final historial = await service.obtenerHistorialCostos(codigo, 5);
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (_) {
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.7,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Historial de Costos",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  nombreProducto,
+                  style: const TextStyle(color: Colors.grey),
+                ),
+                const Divider(),
+                Expanded(
+                  child: historial.isEmpty
+                      ? const Center(
+                          child: Text("No hay historial de compras disponible"),
+                        )
+                      : ListView.builder(
+                          itemCount: historial.length,
+                          itemBuilder: (context, index) {
+                            final h = historial[index];
+
+                            final costoFinal =
+                                double.tryParse(
+                                  h["costo_final"]?.toString() ?? "0",
+                                ) ??
+                                0.0;
+                            final ivaPct =
+                                h["iva_porcentaje"]?.toString() ?? "0";
+                            final tieneIva = h["tiene_iva"] == true;
+                            final etiquetaIva = tieneIva
+                                ? "(Con IVA)"
+                                : "(Sin IVA)";
+
+                            return Card(
+                              child: ListTile(
+                                title: Text(
+                                  "\$${costoFinal.toStringAsFixed(3)} $etiquetaIva",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.green,
+                                  ),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "Proveedor: ${h["proveedor"] ?? 'Desconocido'}",
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Text(
+                                      "Fecha: ${h["fecha"]?.toString().split('T').first ?? ''} | Impuesto: $ivaPct% IVA",
+                                    ),
+                                    Text(
+                                      "Doc: ${h["documento"] ?? ''}",
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Error al cargar el historial")),
+      );
+    }
+  }
+
+  List<dynamic> _obtenerItemsParaTexto(String proveedor) {
+    final textos = textosGenerados?["textos"] as List<dynamic>? ?? [];
+    final provData = textos.firstWhere(
+      (t) => t["proveedor"] == proveedor,
+      orElse: () => {},
+    );
+    final items = provData["items_detalle"] as List<dynamic>? ?? [];
+
+    return items.where((item) {
+      final tipo = item["tipo_destino"]?.toString().toUpperCase() ?? "VENTA";
+      return filtroSeleccionado == "TODOS" || tipo == filtroSeleccionado;
+    }).toList();
+  }
+
+  String _construirTextoComoPDF(String proveedor, List<dynamic> items) {
+    double subtotal15 = 0.0;
+    double subtotal0 = 0.0;
+    const double totalDescuentos = 0.0;
+
+    String txt = "*Duchi Sanchez Rosa Emperatriz*\n";
+    txt += "RUC: 0102249976001\n";
+    txt += "*FERROTIENDA*\n";
+    txt += "Dirección Matriz: 1ro de Septiembre y Cantón Sígsig\n\n";
+
+    txt += "Orden de pedido #${widget.pedidoId}\n";
+    txt += "Proveedor: $proveedor\n";
+    txt += "Fecha de emisión: ${_formatearFechaCorta(DateTime.now())}\n";
+    txt +=
+        "Fecha tentativa entrega: ${_formatearFechaCorta(DateTime.now().add(const Duration(days: 7)))}\n";
+    txt += "Vigencia del pedido: 1 semana\n\n";
+
+    txt += "📦 *DETALLE DEL PEDIDO:*\n";
+    txt += "----------------------------------------\n";
+
+    for (var item in items) {
+      final cant = double.tryParse(item["cantidad_pedida"].toString()) ?? 0;
+      final costoUnit =
+          double.tryParse(item["costo_base"]?.toString() ?? "0") ?? 0.0;
+      final tieneIva = item["tiene_iva"] == true;
+      const desc = 0.0;
+
+      final subtotalItem = (costoUnit - desc) * cant;
+
+      if (tieneIva) {
+        subtotal15 += subtotalItem;
+      } else {
+        subtotal0 += subtotalItem;
+      }
+
+      txt += "▪️ ${item["nombre_producto"]}\n";
+      txt += "   Código: ${item["codigo_producto"]} | Cant: $cant\n";
+      txt +=
+          "   Costo U: \$${costoUnit.toStringAsFixed(4)} | IVA: ${tieneIva ? '15%' : '0%'}\n";
+      txt += "   Total: \$${subtotalItem.toStringAsFixed(2)}\n\n";
+    }
+
+    final totalIva = subtotal15 * 0.15;
+    final totalNeto = subtotal15 + subtotal0 + totalIva - totalDescuentos;
+
+    txt += "----------------------------------------\n";
+    txt += "Subtotal 15% (con IVA): \$${subtotal15.toStringAsFixed(2)}\n";
+    txt += "Subtotal 0% (sin IVA): \$${subtotal0.toStringAsFixed(2)}\n";
+    txt += "Total Descuentos: \$${totalDescuentos.toStringAsFixed(2)}\n";
+    txt += "Valor Total de IVA: \$${totalIva.toStringAsFixed(2)}\n";
+    txt += "💰 *TOTAL NETO A PAGAR: \$${totalNeto.toStringAsFixed(2)}*\n";
+
+    return txt;
+  }
+
+  Future<void> _compartirUnificado(
     String proveedor,
     List<dynamic> items,
+    String textoPlano,
+    int totalProveedores,
   ) async {
     final pdf = pw.Document();
 
     double subtotal15 = 0.0;
     double subtotal0 = 0.0;
-    const double totalDescuentos =
-        0.0; // Espacio para futura lógica de descuentos
+    const double totalDescuentos = 0.0;
 
     final tableData = items.map((item) {
       final cant = double.tryParse(item["cantidad_pedida"].toString()) ?? 0;
@@ -141,7 +474,6 @@ class _GenerarPedidoProveedorDialogState
         margin: const pw.EdgeInsets.all(32),
         build: (pw.Context context) {
           return [
-            // Encabezado
             pw.Text(
               "Duchi Sanchez Rosa Emperatriz",
               style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16),
@@ -153,7 +485,6 @@ class _GenerarPedidoProveedorDialogState
             ),
             pw.Text("Dirección Matriz: 1ro de Septiembre y Cantón Sígsig"),
             pw.SizedBox(height: 20),
-
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -177,7 +508,6 @@ class _GenerarPedidoProveedorDialogState
                     pw.Text(
                       "Fecha de emisión: ${_formatearFechaCorta(DateTime.now())}",
                     ),
-                    // Sumamos 7 días como fecha tentativa por defecto
                     pw.Text(
                       "Fecha tentativa entrega: ${_formatearFechaCorta(DateTime.now().add(const Duration(days: 7)))}",
                     ),
@@ -187,8 +517,6 @@ class _GenerarPedidoProveedorDialogState
               ],
             ),
             pw.SizedBox(height: 20),
-
-            // Tabla de productos
             pw.TableHelper.fromTextArray(
               headers: [
                 'Código',
@@ -214,8 +542,6 @@ class _GenerarPedidoProveedorDialogState
               },
             ),
             pw.SizedBox(height: 20),
-
-            // Totales (Footer)
             pw.Container(
               alignment: pw.Alignment.centerRight,
               child: pw.Column(
@@ -249,97 +575,46 @@ class _GenerarPedidoProveedorDialogState
       ),
     );
 
-    // Guardar y compartir
-    // Guardar y compartir (CÓDIGO ANTERIOR QUE FALLA EN WEB)
-    // Guardar y compartir (CÓDIGO NUEVO - COMPATIBLE CON WEB Y MÓVIL)
     final bytes = await pdf.save();
-
     final xFile = XFile.fromData(
       bytes,
       name: 'Orden_Pedido_${widget.pedidoId}_$proveedor.pdf',
       mimeType: 'application/pdf',
     );
 
-    await Share.shareXFiles([
-      xFile,
-    ], text: 'Adjunto la Orden de Pedido #${widget.pedidoId} para $proveedor');
-  }
+    await Share.shareXFiles([xFile], text: textoPlano);
 
-  void _enviarWhatsAppTexto(String numero, String texto) async {
-    if (numero.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Ingresa un número de celular")),
-      );
-      return;
-    }
-    final url = Uri.parse(
-      "https://wa.me/593${numero.replaceFirst(RegExp(r'^0'), '')}?text=${Uri.encodeComponent(texto)}",
-    );
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No se pudo abrir WhatsApp")),
+    // 🔥 GUARDAMOS EL PROGRESO EN CACHÉ 🔥
+    setState(() {
+      proveedoresEnviados.add(proveedor);
+    });
+    if (_prefs != null) {
+      await _prefs!.setStringList(
+        'pedido_${widget.pedidoId}_sent',
+        proveedoresEnviados.toList(),
       );
     }
-  }
 
-  // --- Mismos métodos _cambiarProveedor y _verHistorial que antes ---
-  Future<void> _cambiarProveedor(dynamic item) async {
-    /* Mismo código anterior */
-  }
-  void _verHistorial(String codigo, String nombreProducto) async {
-    /* Mismo código anterior */
-  }
-
-  List<dynamic> _obtenerItemsParaTexto(String proveedor) {
-    final items =
-        textosGenerados?["textos"]?.firstWhere(
-              (t) => t["proveedor"] == proveedor,
-              orElse: () => {},
-            )["items_detalle"]
-            as List<dynamic>? ??
-        [];
-    return items.where((item) {
-      final tipo = item["tipo_destino"]?.toString().toUpperCase() ?? "VENTA";
-      return filtroSeleccionado == "TODOS" || tipo == filtroSeleccionado;
-    }).toList();
-  }
-
-  String _construirTexto(String proveedor) {
-    final items = _obtenerItemsParaTexto(proveedor);
-    final ventas = items.where(
-      (i) =>
-          (i["tipo_destino"]?.toString().toUpperCase() ?? "VENTA") == "VENTA",
-    );
-    final gastos = items.where(
-      (i) => (i["tipo_destino"]?.toString().toUpperCase() ?? "") == "GASTO",
-    );
-
-    String texto =
-        "Hola, buen día.\n\nPor favor ayudarme con la Orden de Pedido #${widget.pedidoId}:\n\n";
-
-    if (ventas.isNotEmpty) {
-      texto += "🛒 PRODUCTOS PARA VENTA:\n\n";
-      for (var i in ventas) {
-        texto +=
-            "- ${i["nombre_producto"]}\n  Código: ${i["codigo_producto"]}\n  Cantidad: ${i["cantidad_pedida"]} ${i["unidad"] ?? 'UNIDADES'}\n\n";
-      }
+    if (proveedoresEnviados.length == totalProveedores) {
+      await _autoMarcarComoEnviado();
     }
-
-    if (gastos.isNotEmpty) {
-      texto += "🔥 PRODUCTOS PARA GASTO:\n\n";
-      for (var i in gastos) {
-        texto +=
-            "- ${i["nombre_producto"]}\n  Código: ${i["codigo_producto"]}\n  Cantidad: ${i["cantidad_pedida"]} ${i["unidad"] ?? 'UNIDADES'}\n\n";
-      }
-    }
-    texto += "Gracias.";
-    return texto;
   }
 
   @override
   Widget build(BuildContext context) {
+    final textos = textosGenerados?["textos"] as List<dynamic>? ?? [];
+    final proveedoresDisponibles = textos
+        .map((t) => t["proveedor"]?.toString() ?? "SIN PROVEEDOR")
+        .toList();
+    final totalProv = proveedoresDisponibles.length;
+    final sentProv = proveedoresEnviados.length;
+    final progress = totalProv == 0 ? 0.0 : sentProv / totalProv;
+
+    // 🔥 Actualizamos el total general en caché para que la lista principal lo lea
+    if (_prefs != null && totalProv > 0) {
+      _prefs!.setInt('pedido_${widget.pedidoId}_total', totalProv);
+    }
+
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       insetPadding: const EdgeInsets.all(16),
@@ -354,36 +629,105 @@ class _GenerarPedidoProveedorDialogState
             : Column(
                 children: [
                   const Text(
-                    "Generar pedido y Análisis Global",
+                    "Gestión de Pedidos a Proveedores",
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: DefaultTabController(
-                      length: 2,
+                  const SizedBox(height: 8),
+
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _getColorPorEstado(pedido?["estado"]?.toString()),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      "Estado General: ${pedido?["estado"] ?? 'CARGANDO...'}",
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+
+                  if (totalProv > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        top: 16.0,
+                        bottom: 8.0,
+                        left: 16,
+                        right: 16,
+                      ),
                       child: Column(
                         children: [
-                          const TabBar(
-                            labelColor: Colors.blue,
-                            unselectedLabelColor: Colors.grey,
-                            indicatorColor: Colors.blue,
-                            tabs: [
-                              Tab(text: "Textos Proveedores (PDF)"),
-                              Tab(text: "Análisis Global"),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                "Progreso de envíos:",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade700,
+                                ),
+                              ),
+                              Text(
+                                "$sentProv/$totalProv",
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ],
                           ),
-                          Expanded(
-                            child: TabBarView(
-                              children: [
-                                _buildPestanaTextos(),
-                                _buildPestanaAnalisisGlobal(),
-                              ],
-                            ),
+                          const SizedBox(height: 6),
+                          LinearProgressIndicator(
+                            value: progress,
+                            backgroundColor: Colors.grey.shade200,
+                            color: Colors.green,
+                            minHeight: 8,
+                            borderRadius: BorderRadius.circular(8),
                           ),
                         ],
                       ),
                     ),
+
+                  const SizedBox(height: 8),
+
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text("Todos"),
+                        selected: filtroSeleccionado == "TODOS",
+                        onSelected: (_) =>
+                            setState(() => filtroSeleccionado = "TODOS"),
+                      ),
+                      ChoiceChip(
+                        label: const Text("Venta"),
+                        selected: filtroSeleccionado == "VENTA",
+                        onSelected: (_) =>
+                            setState(() => filtroSeleccionado = "VENTA"),
+                      ),
+                      ChoiceChip(
+                        label: const Text("Gasto"),
+                        selected: filtroSeleccionado == "GASTO",
+                        onSelected: (_) =>
+                            setState(() => filtroSeleccionado = "GASTO"),
+                      ),
+                    ],
                   ),
+                  const Divider(),
+
+                  Expanded(
+                    child: _buildListaUnificada(
+                      proveedoresDisponibles,
+                      totalProv,
+                    ),
+                  ),
+
                   const SizedBox(height: 10),
                   Align(
                     alignment: Alignment.centerRight,
@@ -401,247 +745,261 @@ class _GenerarPedidoProveedorDialogState
     );
   }
 
-  Widget _buildPestanaTextos() {
-    final textos = textosGenerados?["textos"] as List<dynamic>? ?? [];
-    final proveedoresDisponibles = textos
-        .map((t) => t["proveedor"]?.toString() ?? "SIN PROVEEDOR")
-        .toList();
+  Widget _buildListaUnificada(
+    List<String> proveedoresDisponibles,
+    int totalProveedores,
+  ) {
+    if (proveedoresDisponibles.isEmpty) {
+      return const Center(
+        child: Text("No hay productos asignados a proveedores en este pedido."),
+      );
+    }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          children: [
-            ChoiceChip(
-              label: const Text("Todos"),
-              selected: filtroSeleccionado == "TODOS",
-              onSelected: (_) => setState(() => filtroSeleccionado = "TODOS"),
-            ),
-            ChoiceChip(
-              label: const Text("Venta"),
-              selected: filtroSeleccionado == "VENTA",
-              onSelected: (_) => setState(() => filtroSeleccionado = "VENTA"),
-            ),
-            ChoiceChip(
-              label: const Text("Gasto"),
-              selected: filtroSeleccionado == "GASTO",
-              onSelected: (_) => setState(() => filtroSeleccionado = "GASTO"),
-            ),
-          ],
-        ),
-        const Divider(),
-        Expanded(
-          child: ListView.builder(
-            itemCount: proveedoresDisponibles.length,
-            itemBuilder: (context, index) {
-              final prov = proveedoresDisponibles[index];
-              final items = _obtenerItemsParaTexto(prov);
-              if (items.isEmpty) return const SizedBox.shrink();
+    return ListView.builder(
+      itemCount: proveedoresDisponibles.length,
+      itemBuilder: (context, index) {
+        final prov = proveedoresDisponibles[index];
+        final items = _obtenerItemsParaTexto(prov);
 
-              final textoFinal = _construirTexto(prov);
-              _celularControllers.putIfAbsent(
-                prov,
-                () => TextEditingController(),
-              );
+        if (items.isEmpty) return const SizedBox.shrink();
 
-              return Card(
-                color: Colors.grey.shade50,
-                margin: const EdgeInsets.only(bottom: 16),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
+        final textoPlanoFinal = _construirTextoComoPDF(prov, items);
+        final bool enviado = proveedoresEnviados.contains(prov);
+
+        return Card(
+          color: enviado ? Colors.green.shade50 : Colors.grey.shade50,
+          margin: const EdgeInsets.only(bottom: 24),
+          elevation: 3,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: enviado
+                ? BorderSide(color: Colors.green.shade300, width: 1.5)
+                : BorderSide.none,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
                         prov,
-                        style: const TextStyle(
-                          fontSize: 16,
+                        style: TextStyle(
+                          fontSize: 18,
                           fontWeight: FontWeight.bold,
+                          color: enviado
+                              ? Colors.green.shade800
+                              : Colors.blueGrey,
                         ),
                       ),
-                      Text(
-                        "Items a pedir: ${items.length}",
-                        style: const TextStyle(color: Colors.grey),
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Celdas de Acción PDF y WhatsApp
-                      Row(
+                    ),
+                    if (enviado)
+                      const Row(
                         children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _celularControllers[prov],
-                              keyboardType: TextInputType.phone,
-                              decoration: const InputDecoration(
-                                labelText: "WhatsApp Prov.",
-                                prefixIcon: Icon(Icons.phone_android, size: 18),
-                                isDense: true,
-                                border: OutlineInputBorder(),
-                              ),
+                          Text(
+                            "Enviado",
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.picture_as_pdf,
-                              color: Colors.red,
-                            ),
-                            tooltip: "Generar y Compartir PDF",
-                            onPressed: () => _generarYCompartirPDF(prov, items),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.send, color: Colors.green),
-                            tooltip: "Enviar Resumen por WhatsApp",
-                            onPressed: () => _enviarWhatsAppTexto(
-                              _celularControllers[prov]!.text,
-                              textoFinal,
-                            ),
+                          SizedBox(width: 4),
+                          Icon(
+                            Icons.check_circle,
+                            color: Colors.green,
+                            size: 20,
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                  ],
+                ),
+                const SizedBox(height: 12),
 
-                      // Caja de texto copiable
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: SelectableText(
-                          textoFinal,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: () {
-                            Clipboard.setData(ClipboardData(text: textoFinal));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text("Copiado al portapapeles"),
-                              ),
-                            );
-                          },
-                          icon: const Icon(Icons.copy, size: 16),
-                          label: const Text("Copiar Texto"),
-                        ),
-                      ),
-                    ],
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: enviado
+                          ? Colors.grey.shade300
+                          : Colors.blue.shade700,
+                      foregroundColor: enviado ? Colors.black87 : Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      elevation: 0,
+                    ),
+                    icon: Icon(enviado ? Icons.replay : Icons.share),
+                    label: Text(
+                      enviado
+                          ? "Reenviar PDF + Texto"
+                          : "Compartir PDF y Texto",
+                    ),
+                    onPressed: () => _compartirUnificado(
+                      prov,
+                      items,
+                      textoPlanoFinal,
+                      totalProveedores,
+                    ),
                   ),
                 ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
+                const Divider(height: 32, thickness: 1.5),
 
-  Widget _buildPestanaAnalisisGlobal() {
-    final items = pedido?["items"] as List<dynamic>? ?? [];
+                const Text(
+                  "Análisis de Costos de los Productos:",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+                const SizedBox(height: 8),
 
-    if (items.isEmpty)
-      return const Center(child: Text("El pedido no tiene productos."));
+                ...items.map((item) {
+                  final codigo = item["codigo_producto"]?.toString() ?? "";
+                  final costoData = costosCache[codigo];
 
-    return ListView.builder(
-      padding: const EdgeInsets.only(top: 12),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        final codigo = item["codigo_producto"]?.toString() ?? "";
-        final costoData = costosCache[codigo];
+                  String textoCosto = "Buscando...";
+                  String provMasBarato = "";
 
-        String textoCosto = "Buscando...";
-        String provMasBarato = "";
+                  if (costosCache.containsKey(codigo)) {
+                    if (costoData == null) {
+                      textoCosto = "Sin historial en 3 meses";
+                    } else {
+                      final tieneIva = costoData["tiene_iva"] == true;
+                      final etiquetaIva = tieneIva ? "(Con IVA)" : "(Sin IVA)";
+                      final costoFinal =
+                          double.tryParse(
+                            costoData["costo_final"]?.toString() ?? "0",
+                          ) ??
+                          0.0;
 
-        if (costosCache.containsKey(codigo)) {
-          if (costoData == null) {
-            textoCosto = "Sin historial en 3 meses";
-          } else {
-            // Evaluamos si es Con IVA o Sin IVA en el UI
-            final tieneIva = costoData["tiene_iva"] == true;
-            final etiquetaIva = tieneIva ? "(Con IVA)" : "(Sin IVA)";
-            final costoFinal =
-                double.tryParse(costoData["costo_final"]?.toString() ?? "0") ??
-                0.0;
+                      textoCosto =
+                          "\$${costoFinal.toStringAsFixed(3)} $etiquetaIva";
+                      provMasBarato = costoData["proveedor"] ?? "Desconocido";
+                    }
+                  }
 
-            textoCosto = "\$${costoFinal.toStringAsFixed(3)} $etiquetaIva";
-            provMasBarato = costoData["proveedor"] ?? "Desconocido";
-          }
-        }
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item["nombre_producto"]?.toString() ?? "",
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        "Actual: ${item["proveedor"] ?? 'Sin Asignar'} | Cant: ${item["cantidad_pedida"]}",
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      if (costoData != null) ...[
-                        Text(
-                          "Mejor costo: $textoCosto",
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item["nombre_producto"]?.toString() ?? "",
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                "Cant a pedir: ${item["cantidad_pedida"]} ${item["unidad"] ?? 'U'}",
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              if (costoData != null) ...[
+                                Text(
+                                  "Mejor costo: $textoCosto",
+                                  style: const TextStyle(
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                Text(
+                                  "Prov. barato: $provMasBarato",
+                                  style: TextStyle(
+                                    color: Colors.orange.shade800,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ] else ...[
+                                Text(
+                                  textoCosto,
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
-                        Text(
-                          "Prov. barato: $provMasBarato",
-                          style: TextStyle(
-                            color: Colors.orange.shade800,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ] else ...[
-                        Text(
-                          textoCosto,
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
-                          ),
+                        Column(
+                          children: [
+                            IconButton(
+                              tooltip: "Cambiar Proveedor Destino",
+                              icon: const Icon(
+                                Icons.swap_horiz,
+                                color: Colors.blue,
+                              ),
+                              onPressed: () => _cambiarProveedor(item),
+                            ),
+                            IconButton(
+                              tooltip: "Historial de Costos",
+                              icon: const Icon(
+                                Icons.history,
+                                color: Colors.blue,
+                              ),
+                              onPressed: () => _verHistorial(
+                                codigo,
+                                item["nombre_producto"]?.toString() ?? "",
+                              ),
+                            ),
+                          ],
                         ),
                       ],
-                    ],
+                    ),
+                  );
+                }).toList(),
+
+                const Divider(height: 32, thickness: 1.5),
+
+                const Text(
+                  "Vista previa del texto para WhatsApp:",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SelectableText(
+                    textoPlanoFinal,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ),
-                Column(
-                  children: [
-                    IconButton(
-                      tooltip: "Cambiar Proveedor Destino",
-                      icon: const Icon(Icons.swap_horiz, color: Colors.blue),
-                      onPressed: () => _cambiarProveedor(item),
-                    ),
-                    IconButton(
-                      tooltip: "Historial de Costos",
-                      icon: const Icon(Icons.history, color: Colors.blue),
-                      onPressed: () => _verHistorial(
-                        codigo,
-                        item["nombre_producto"]?.toString() ?? "",
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: textoPlanoFinal));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("Texto copiado al portapapeles"),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.copy, size: 16),
+                    label: const Text("Copiar Texto"),
+                  ),
                 ),
               ],
             ),
