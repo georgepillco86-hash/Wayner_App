@@ -157,10 +157,17 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
         final id = pedido["id"]?.toString().toLowerCase() ?? "";
         final codigo = pedido["codigo_pedido"]?.toString().toLowerCase() ?? "";
         final usuario = pedido["usuario"]?.toString().toLowerCase() ?? "";
+        // 🔥 Añadimos el proveedor a los parámetros de búsqueda
+        final proveedor =
+            pedido["proveedor"]?.toString().toLowerCase() ??
+            pedido["proveedores"]?.toString().toLowerCase() ??
+            "";
 
-        final coincide = id.contains(busqueda) ||
+        final coincide =
+            id.contains(busqueda) ||
             codigo.contains(busqueda) ||
-            usuario.contains(busqueda);
+            usuario.contains(busqueda) ||
+            proveedor.contains(busqueda);
 
         if (!coincide) return false;
       }
@@ -215,10 +222,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
     return Chip(
       label: Text(
         texto,
-        style: TextStyle(
-          color: color.shade900,
-          fontWeight: FontWeight.bold,
-        ),
+        style: TextStyle(color: color.shade900, fontWeight: FontWeight.bold),
       ),
       backgroundColor: color.shade100,
       side: BorderSide(color: color.shade700),
@@ -233,9 +237,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
     final actualizado = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => BodegaPedidoDetalleScreen(
-          pedidoId: pedidoId,
-        ),
+        builder: (_) => BodegaPedidoDetalleScreen(pedidoId: pedidoId),
       ),
     );
 
@@ -280,7 +282,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
     final textoRango = fechaDesde == null || fechaHasta == null
         ? "Filtrar por fecha"
         : "${fechaDesde!.year}-${fechaDesde!.month.toString().padLeft(2, '0')}-${fechaDesde!.day.toString().padLeft(2, '0')} "
-            "a ${fechaHasta!.year}-${fechaHasta!.month.toString().padLeft(2, '0')}-${fechaHasta!.day.toString().padLeft(2, '0')}";
+              "a ${fechaHasta!.year}-${fechaHasta!.month.toString().padLeft(2, '0')}-${fechaHasta!.day.toString().padLeft(2, '0')}";
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
@@ -289,7 +291,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
           TextField(
             controller: busquedaController,
             decoration: const InputDecoration(
-              hintText: "Buscar por usuario o número de pedido",
+              hintText: "Buscar por usuario, N° pedido o proveedor",
               prefixIcon: Icon(Icons.search),
               border: OutlineInputBorder(),
             ),
@@ -304,10 +306,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                 child: OutlinedButton.icon(
                   onPressed: seleccionarRangoFechas,
                   icon: const Icon(Icons.date_range),
-                  label: Text(
-                    textoRango,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  label: Text(textoRango, overflow: TextOverflow.ellipsis),
                 ),
               ),
               const SizedBox(width: 8),
@@ -323,7 +322,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
     );
   }
 
-
   @override
   void dispose() {
     busquedaController.dispose();
@@ -336,10 +334,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
       appBar: AppBar(
         title: const Text("Recepción de pedidos"),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: cargarPedidos,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: cargarPedidos),
         ],
       ),
       body: Column(
@@ -352,129 +347,148 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
               child: isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : errorMessage != null
-                      ? ListView(
-                          children: [
-                            const SizedBox(height: 80),
-                            Center(
-                              child: Text(
-                                errorMessage!,
-                                style: const TextStyle(color: Colors.red),
-                              ),
-                            ),
-                          ],
-                        )
-                      : pedidosFiltrados.isEmpty
-                          ? ListView(
-                              children: const [
-                                SizedBox(height: 100),
-                                Center(
-                                  child: Text(
-                                    "No hay pedidos para el filtro seleccionado",
-                                  ),
-                                ),
-                              ],
-                            )
-                          : ListView.builder(
-                              padding: const EdgeInsets.all(12),
-                              itemCount: pedidosFiltrados.length,
-                              itemBuilder: (context, index) {
-                                final pedido = pedidosFiltrados[index];
+                  ? ListView(
+                      children: [
+                        const SizedBox(height: 80),
+                        Center(
+                          child: Text(
+                            errorMessage!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    )
+                  : pedidosFiltrados.isEmpty
+                  ? ListView(
+                      children: const [
+                        SizedBox(height: 100),
+                        Center(
+                          child: Text(
+                            "No hay pedidos para el filtro seleccionado",
+                          ),
+                        ),
+                      ],
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: pedidosFiltrados.length,
+                      itemBuilder: (context, index) {
+                        final pedido = pedidosFiltrados[index];
 
-                                final total = int.tryParse(
-                                      (pedido["total_items"] ?? 0).toString(),
-                                    ) ??
-                                    0;
+                        final total =
+                            int.tryParse(
+                              (pedido["total_items"] ?? 0).toString(),
+                            ) ??
+                            0;
 
-                                final recibidos = int.tryParse(
-                                      (pedido["total_recibidos"] ?? 0).toString(),
-                                    ) ??
-                                    0;
+                        final recibidos =
+                            int.tryParse(
+                              (pedido["total_recibidos"] ?? 0).toString(),
+                            ) ??
+                            0;
 
-                                final observaciones = int.tryParse(
-                                      (pedido["total_observaciones"] ?? 0).toString(),
-                                    ) ??
-                                    0;
+                        final observaciones =
+                            int.tryParse(
+                              (pedido["total_observaciones"] ?? 0).toString(),
+                            ) ??
+                            0;
 
-                                return Card(
-                                  margin: const EdgeInsets.only(bottom: 10),
-                                  child: InkWell(
-                                    onTap: () => abrirDetalle(pedido),
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(14),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              CircleAvatar(
-                                                child: Text(
-                                                  pedido["id"]?.toString() ?? "-",
-                                                ),
-                                              ),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      "Pedido #${pedido["id"]}",
-                                                      style: const TextStyle(
-                                                        fontSize: 18,
-                                                        fontWeight: FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                    const SizedBox(height: 4),
-                                                    Text(
-                                                      "Usuario: ${pedido["usuario"] ?? ""}",
-                                                    ),
-                                                    Text(
-                                                      "Fecha: ${formatearFecha(pedido["fecha_creacion"])}",
-                                                    ),
-                                                    Text(
-                                                      "Estado: ${pedido["estado"] ?? ""}",
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                              buildEstadoRecepcion(pedido),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 12),
-                                          LinearProgressIndicator(
-                                            value: calcularProgreso(pedido),
-                                            minHeight: 7,
-                                            borderRadius: BorderRadius.circular(20),
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Text(
-                                            "Recibidos: $recibidos/$total",
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          if (observaciones > 0)
-                                            Text(
-                                              "Observaciones: $observaciones",
-                                              style: TextStyle(
-                                                color: Colors.orange.shade900,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                        ],
+                        // Identificamos el nombre del proveedor para mostrarlo
+                        final proveedor =
+                            pedido["proveedor"] ??
+                            pedido["proveedores"] ??
+                            'Sin proveedor asignado';
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: InkWell(
+                            onTap: () => abrirDetalle(pedido),
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      CircleAvatar(
+                                        child: Text(
+                                          pedido["id"]?.toString() ?? "-",
+                                        ),
                                       ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            // 🔥 TÍTULO ACTUALIZADO
+                                            Text(
+                                              "Orden de pedido #${pedido["id"]}",
+                                              style: const TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              "Usuario: ${pedido["usuario"] ?? ""}",
+                                            ),
+                                            Text(
+                                              "Fecha: ${formatearFecha(pedido["fecha_creacion"])}",
+                                            ),
+                                            Text(
+                                              "Estado: ${pedido["estado"] ?? ""}",
+                                            ),
+                                            // 🔥 LÍNEA DE PROVEEDOR AÑADIDA
+                                            Text(
+                                              "Proveedor: $proveedor",
+                                              style: const TextStyle(
+                                                fontStyle: FontStyle.italic,
+                                                color: Colors.blueGrey,
+                                                fontSize: 13,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      buildEstadoRecepcion(pedido),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  LinearProgressIndicator(
+                                    value: calcularProgreso(pedido),
+                                    minHeight: 7,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    "Recibidos: $recibidos/$total",
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
-                                );
-                              },
+                                  if (observaciones > 0)
+                                    Text(
+                                      "Observaciones: $observaciones",
+                                      style: TextStyle(
+                                        color: Colors.orange.shade900,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),  
-                      ],  
+                        );
+                      },
                     ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

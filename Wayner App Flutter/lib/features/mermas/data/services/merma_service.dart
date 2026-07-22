@@ -5,7 +5,7 @@ import '../models/merma_historial_model.dart';
 import '../../../../core/storage/session_storage.dart';
 
 class MermaService {
-  final String baseUrl = 'http://localhost:8000/api/mermas';
+  final String baseUrl = 'http://localhost:5000/api/mermas';
 
   Future<Map<String, String>> _getHeaders() async {
     final user = await SessionStorage.getUser();
@@ -18,7 +18,9 @@ class MermaService {
 
   Future<List<Merma>> listarMermas() async {
     final response = await http.get(
-      Uri.parse('$baseUrl/'),
+      Uri.parse(
+        '$baseUrl/',
+      ), // 🔥 CORREGIDO: Slash devuelto para evitar el 307 Redirect
       headers: await _getHeaders(),
     );
     if (response.statusCode == 200) {
@@ -28,7 +30,6 @@ class MermaService {
     throw Exception('Error al cargar mermas');
   }
 
-  // --- NUEVO: Obtener el Chat/Historial ---
   Future<List<MermaHistorial>> obtenerHistorial(int mermaId) async {
     final response = await http.get(
       Uri.parse('$baseUrl/$mermaId/historial'),
@@ -43,7 +44,9 @@ class MermaService {
 
   Future<bool> crearMerma(Merma merma) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/'),
+      Uri.parse(
+        '$baseUrl/',
+      ), // 🔥 CORREGIDO: Slash devuelto para evitar el 307 Redirect
       headers: await _getHeaders(),
       body: jsonEncode(merma.toJson()),
     );
@@ -59,7 +62,6 @@ class MermaService {
     return response.statusCode == 200;
   }
 
-  // --- ACTUALIZADO: Envía comentario y nota de crédito ---
   Future<bool> cambiarEstado({
     required int id,
     required String estado,
