@@ -315,7 +315,9 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                       icon: Icons.inventory,
                       title: "Recepción de pedidos",
                       onTap: () {
-                        abrirPantalla(const BodegaPedidosScreen());
+                        abrirPantalla(
+                          BodegaPedidosScreen(),
+                        ); // 🔥 ELIMINADO EL const
                       },
                     ),
                   ],

@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-
 import '../services/pedidos_service.dart';
 
 class BodegaPedidoDetalleScreen extends StatefulWidget {
   final int pedidoId;
+  final String proveedorFiltro; // 🔥 Parámetro para saber qué proveedor mostrar
 
   const BodegaPedidoDetalleScreen({
     super.key,
     required this.pedidoId,
+    required this.proveedorFiltro,
   });
 
   @override
@@ -16,14 +16,12 @@ class BodegaPedidoDetalleScreen extends StatefulWidget {
       _BodegaPedidoDetalleScreenState();
 }
 
-class _BodegaPedidoDetalleScreenState
-    extends State<BodegaPedidoDetalleScreen> {
+class _BodegaPedidoDetalleScreenState extends State<BodegaPedidoDetalleScreen> {
   final PedidosService service = PedidosService();
 
   bool isLoading = true;
-  bool procesandoRecepcion = false;
-
-  Map<String, dynamic>? pedido;
+  String? errorMessage;
+  Map<String, dynamic>? detallePedido;
 
   @override
   void initState() {
@@ -31,14 +29,10 @@ class _BodegaPedidoDetalleScreenState
     cargarDetalle();
   }
 
-  bool get puedeEditarRecepcion {
-    final estado = pedido?["estado"]?.toString().toUpperCase() ?? "";
-    return estado == "ENVIADO";
-  }
-
   Future<void> cargarDetalle() async {
     setState(() {
       isLoading = true;
+      errorMessage = null;
     });
 
     try {
@@ -47,14 +41,14 @@ class _BodegaPedidoDetalleScreenState
       if (!mounted) return;
 
       setState(() {
-        pedido = data;
+        detallePedido = data;
       });
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error cargando detalle: $e")),
-      );
+      setState(() {
+        errorMessage = "No se pudo cargar el detalle del pedido";
+      });
     } finally {
       if (!mounted) return;
 
@@ -64,24 +58,11 @@ class _BodegaPedidoDetalleScreenState
     }
   }
 
-  Future<void> actualizarRecepcionItem({
-    required int itemId,
-    required bool recibido,
-    required String? comentario,
-  }) async {
-    if (!puedeEditarRecepcion) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Este pedido ya no permite modificar recepción"),
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      procesandoRecepcion = true;
-    });
-
+  Future<void> actualizarRecepcion(
+    int itemId,
+    bool recibido,
+    String? comentario,
+  ) async {
     try {
       await service.actualizarRecepcionItemPedido(
         pedidoId: widget.pedidoId,
@@ -89,55 +70,38 @@ class _BodegaPedidoDetalleScreenState
         recibido: recibido,
         comentarioRecepcion: comentario,
       );
-
       await cargarDetalle();
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Recepción actualizada")),
-      );
     } catch (e) {
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error actualizando recepción: $e")),
+        const SnackBar(
+          content: Text("Error al actualizar la recepción del item"),
+        ),
       );
-    } finally {
-      if (!mounted) return;
-
-      setState(() {
-        procesandoRecepcion = false;
-      });
     }
   }
 
-  Future<void> editarComentario(dynamic item) async {
-    if (!puedeEditarRecepcion) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Este pedido ya no permite modificar comentarios"),
-        ),
-      );
-      return;
-    }
-
-    final controller = TextEditingController(
-      text: item["comentario_recepcion"] ?? "",
+  void mostrarDialogoComentario(
+    int itemId,
+    bool recibidoActual,
+    String? comentarioActual,
+  ) {
+    final TextEditingController controller = TextEditingController(
+      text: comentarioActual ?? "",
     );
 
-    final result = await showDialog<String>(
+    showDialog(
       context: context,
-      builder: (_) {
+      builder: (context) {
         return AlertDialog(
-          title: const Text("Comentario de recepción"),
+          title: const Text("Comentario / Observación"),
           content: TextField(
             controller: controller,
-            maxLines: 4,
             decoration: const InputDecoration(
-              hintText: "Ej: llegó incompleto",
+              hintText: "Escribe alguna novedad (opcional)...",
               border: OutlineInputBorder(),
             ),
+            maxLines: 3,
           ),
           actions: [
             TextButton(
@@ -146,7 +110,12 @@ class _BodegaPedidoDetalleScreenState
             ),
             ElevatedButton(
               onPressed: () {
-                Navigator.pop(context, controller.text.trim());
+                Navigator.pop(context);
+                actualizarRecepcion(
+                  itemId,
+                  recibidoActual,
+                  controller.text.trim(),
+                );
               },
               child: const Text("Guardar"),
             ),
@@ -154,587 +123,206 @@ class _BodegaPedidoDetalleScreenState
         );
       },
     );
-
-    if (result == null) return;
-
-    await actualizarRecepcionItem(
-      itemId: item["id"],
-      recibido: item["recibido"] == true,
-      comentario: result,
-    );
-  }
-
-  Future<void> toggleRecibido(dynamic item, bool value) async {
-    await actualizarRecepcionItem(
-      itemId: item["id"],
-      recibido: value,
-      comentario: item["comentario_recepcion"],
-    );
-  }
-
-  Future<void> marcarPedidoRecibido() async {
-    if (!puedeEditarRecepcion) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Solo se puede finalizar un pedido ENVIADO"),
-        ),
-      );
-      return;
-    }
-
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (_) {
-        return AlertDialog(
-          title: const Text("Finalizar recepción"),
-          content: const Text(
-            "¿Deseas finalizar la recepción y marcar este pedido como RECIBIDO?",
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text("Cancelar"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text("Confirmar"),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirmar != true) return;
-
-    setState(() {
-      procesandoRecepcion = true;
-    });
-
-    try {
-      await service.marcarPedidoRecibido(widget.pedidoId);
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Pedido marcado como recibido")),
-      );
-
-      Navigator.pop(context, true);
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error marcando pedido recibido: $e")),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          procesandoRecepcion = false;
-        });
-      }
-    }
-  }
-
-  Future<void> seleccionarTodoPedido() async {
-    if (!puedeEditarRecepcion) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Este pedido ya no permite modificar recepción"),
-        ),
-      );
-      return;
-    }
-
-    final proveedores = pedido?["proveedores"] as List<dynamic>? ?? [];
-
-    final items = proveedores
-        .expand((proveedor) => proveedor["items"] as List<dynamic>? ?? [])
-        .where((item) => item["recibido"] != true)
-        .toList();
-
-    if (items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Todos los productos ya están recibidos")),
-      );
-      return;
-    }
-
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Seleccionar todo"),
-        content: Text(
-          "¿Deseas marcar como recibidos los ${items.length} productos pendientes?",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Cancelar"),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text("Confirmar"),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmar != true) return;
-
-    setState(() {
-      procesandoRecepcion = true;
-    });
-
-    try {
-      for (final item in items) {
-        await service.actualizarRecepcionItemPedido(
-          pedidoId: widget.pedidoId,
-          itemId: item["id"],
-          recibido: true,
-          comentarioRecepcion: item["comentario_recepcion"],
-        );
-      }
-
-      await cargarDetalle();
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Todos los productos fueron marcados como recibidos"),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error seleccionando todo: $e")),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          procesandoRecepcion = false;
-        });
-      }
-    }
-  }
-
-  Future<void> marcarProveedorCompleto(dynamic proveedorData) async {
-    if (!puedeEditarRecepcion) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Este pedido ya no permite modificar recepción"),
-        ),
-      );
-      return;
-    }
-
-    final proveedor = proveedorData["proveedor"] ?? "SIN PROVEEDOR";
-    final items = proveedorData["items"] as List<dynamic>? ?? [];
-
-    final pendientes = items.where((item) => item["recibido"] != true).toList();
-
-    if (pendientes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("$proveedor ya está completo")),
-      );
-      return;
-    }
-
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Marcar proveedor completo"),
-        content: Text(
-          "¿Deseas marcar como recibidos los ${pendientes.length} productos de $proveedor?",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Cancelar"),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text("Confirmar"),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmar != true) return;
-
-    setState(() {
-      procesandoRecepcion = true;
-    });
-
-    try {
-      for (final item in pendientes) {
-        await service.actualizarRecepcionItemPedido(
-          pedidoId: widget.pedidoId,
-          itemId: item["id"],
-          recibido: true,
-          comentarioRecepcion: item["comentario_recepcion"],
-        );
-      }
-
-      await cargarDetalle();
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Proveedor $proveedor marcado como completo")),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error actualizando proveedor: $e")),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          procesandoRecepcion = false;
-        });
-      }
-    }
-  }
-
-  Future<void> vistaPreviaNovedades({String? proveedor}) async {
-    try {
-      final data = await service.obtenerTextoNovedadesRecepcion(
-        widget.pedidoId,
-        proveedor: proveedor,
-      );
-
-      final texto = data["texto"]?.toString() ?? "";
-
-      if (!mounted) return;
-
-      await showDialog<void>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: Text(
-            proveedor == null
-                ? "Vista previa de novedades"
-                : "Novedades - $proveedor",
-          ),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: SelectableText(texto),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cerrar"),
-            ),
-            ElevatedButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: texto));
-
-                if (!mounted) return;
-
-                Navigator.pop(context);
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Texto copiado")),
-                );
-              },
-              icon: const Icon(Icons.copy),
-              label: const Text("Copiar"),
-            ),
-          ],
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error generando vista previa: $e")),
-      );
-    }
-  }
-
-  Widget buildBadgeDestino(String tipo) {
-    final isVenta = tipo.toUpperCase() == "VENTA";
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: isVenta ? Colors.blue.shade100 : Colors.orange.shade100,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isVenta ? Colors.blue.shade700 : Colors.orange.shade700,
-        ),
-      ),
-      child: Text(
-        isVenta ? "🛒 VENTA" : "🔥 GASTO",
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          color: isVenta ? Colors.blue.shade900 : Colors.orange.shade900,
-        ),
-      ),
-    );
-  }
-
-  Widget buildProveedorCard(dynamic proveedorData) {
-    final proveedor = proveedorData["proveedor"] ?? "SIN PROVEEDOR";
-    final items = proveedorData["items"] as List<dynamic>? ?? [];
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              proveedor,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: !puedeEditarRecepcion || procesandoRecepcion
-                      ? null
-                      : () => marcarProveedorCompleto(proveedorData),
-                  icon: const Icon(Icons.done_all),
-                  label: const Text("Proveedor completo"),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => vistaPreviaNovedades(proveedor: proveedor),
-                  icon: const Icon(Icons.preview),
-                  label: const Text("Vista previa"),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ...items.map((item) {
-              final recibido = item["recibido"] == true;
-
-              return Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color:
-                        recibido ? Colors.green.shade300 : Colors.grey.shade300,
-                  ),
-                  color: recibido ? Colors.green.shade50 : Colors.white,
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Checkbox(
-                      value: recibido,
-                      onChanged: !puedeEditarRecepcion || procesandoRecepcion
-                          ? null
-                          : (value) {
-                              toggleRecibido(item, value ?? false);
-                            },
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item["nombre_producto"] ?? "",
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          buildBadgeDestino(item["tipo_destino"] ?? "VENTA"),
-                          const SizedBox(height: 8),
-                          Text("Código: ${item["codigo_producto"] ?? ""}"),
-                          Text(
-                            "Cantidad: ${item["cantidad_pedida"]} "
-                            "${item["unidad"] ?? "UNIDADES"}",
-                          ),
-                          if ((item["nota_compra"] ?? "")
-                              .toString()
-                              .trim()
-                              .isNotEmpty)
-                            Text(
-                              "Nota: ${item["nota_compra"]}",
-                              style: TextStyle(color: Colors.orange.shade900),
-                            ),
-                          const SizedBox(height: 10),
-                          if ((item["comentario_recepcion"] ?? "")
-                              .toString()
-                              .trim()
-                              .isNotEmpty)
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.shade50,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: Colors.orange.shade300,
-                                ),
-                              ),
-                              child: Text(
-                                item["comentario_recepcion"],
-                                style: TextStyle(
-                                  color: Colors.orange.shade900,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              OutlinedButton.icon(
-                                onPressed:
-                                    !puedeEditarRecepcion || procesandoRecepcion
-                                        ? null
-                                        : () {
-                                            editarComentario(item);
-                                          },
-                                icon: const Icon(Icons.edit_note),
-                                label: const Text("Comentario"),
-                              ),
-                              const SizedBox(width: 10),
-                              if (recibido)
-                                Chip(
-                                  label: const Text("RECIBIDO"),
-                                  backgroundColor: Colors.green.shade100,
-                                ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final proveedores = pedido?["proveedores"] as List<dynamic>? ?? [];
-    final estadoPedido = pedido?["estado"]?.toString().toUpperCase() ?? "";
-    final puedeFinalizarRecepcion = estadoPedido == "ENVIADO";
+    final usuario = detallePedido?["usuario"] ?? "";
+    final estado = detallePedido?["estado"] ?? "";
+    final observacionGeneral = detallePedido?["observacion"] ?? "";
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text("Recepción Pedido #${widget.pedidoId}"),
-        actions: [
-          IconButton(
-            tooltip: "Seleccionar todo",
-            icon: const Icon(Icons.done_all),
-            onPressed: !puedeEditarRecepcion || procesandoRecepcion
-                ? null
-                : seleccionarTodoPedido,
+    // 🔥 FILTRAMOS LOS PROVEEDORES PARA MOSTRAR ÚNICAMENTE EL QUE CORRESPONDE 🔥
+    final todosLosProveedores =
+        detallePedido?["proveedores"] as List<dynamic>? ?? [];
+    final proveedoresFiltrados = todosLosProveedores.where((grupo) {
+      final provNombre =
+          grupo["proveedor"]?.toString().trim().toUpperCase() ?? "";
+      return provNombre == widget.proveedorFiltro.trim().toUpperCase();
+    }).toList();
+
+    return WillPopScope(
+      onWillPop: () async {
+        Navigator.pop(context, true);
+        return false;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text("Recepción Pedido #${widget.pedidoId}"),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context, true),
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: cargarDetalle,
-          ),
-        ],
-      ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.all(12),
-                    children: [
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text("Usuario: ${pedido?["usuario"] ?? ""}"),
-                              Text("Estado: ${pedido?["estado"] ?? ""}"),
-                              if ((pedido?["observacion"] ?? "")
-                                  .toString()
-                                  .trim()
-                                  .isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Text(pedido?["observacion"] ?? ""),
-                                ),
-                            ],
-                          ),
+        ),
+        body: isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : errorMessage != null
+            ? Center(
+                child: Text(
+                  errorMessage!,
+                  style: const TextStyle(color: Colors.red),
+                ),
+              )
+            : Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Cabecera informativa
+                    Card(
+                      elevation: 2,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Usuario: $usuario",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text("Estado: $estado"),
+                            if (observacionGeneral.isNotEmpty)
+                              Text(
+                                "Obs: $observacionGeneral",
+                                style: const TextStyle(color: Colors.grey),
+                              ),
+                            const Divider(),
+                            Text(
+                              "Proveedor en revisión: ${widget.proveedorFiltro}",
+                              style: const TextStyle(
+                                fontStyle: FontStyle.italic,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blueGrey,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      ...proveedores.map(buildProveedorCard),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        blurRadius: 6,
-                        color: Colors.black.withOpacity(0.08),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () => vistaPreviaNovedades(),
-                              icon: const Icon(Icons.copy),
-                              label: const Text("Vista previa"),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () {
-                                Navigator.pop(context, true);
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Lista de productos del proveedor seleccionado
+                    Expanded(
+                      child: proveedoresFiltrados.isEmpty
+                          ? const Center(
+                              child: Text(
+                                "No hay productos asignados para este proveedor.",
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: proveedoresFiltrados.length,
+                              itemBuilder: (context, pIndex) {
+                                final grupo = proveedoresFiltrados[pIndex];
+                                final items =
+                                    grupo["items"] as List<dynamic>? ?? [];
+
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    ...items.map((item) {
+                                      final itemId =
+                                          int.tryParse(item["id"].toString()) ??
+                                          0;
+                                      final nombre =
+                                          item["nombre_producto"] ?? "";
+                                      final codigo =
+                                          item["codigo_producto"] ?? "";
+                                      final cantidad =
+                                          item["cantidad_pedida"] ?? 0;
+                                      final unidad = item["unidad"] ?? "U";
+                                      final tipoDestino =
+                                          item["tipo_destino"] ?? "VENTA";
+                                      final recibido = item["recibido"] == true;
+                                      final comentario =
+                                          item["comentario_recepcion"];
+
+                                      return Card(
+                                        margin: const EdgeInsets.only(
+                                          bottom: 8,
+                                        ),
+                                        child: ListTile(
+                                          leading: Checkbox(
+                                            value: recibido,
+                                            onChanged: (val) {
+                                              actualizarRecepcion(
+                                                itemId,
+                                                val ?? false,
+                                                comentario,
+                                              );
+                                            },
+                                          ),
+                                          title: Text(
+                                            nombre,
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              decoration: recibido
+                                                  ? TextDecoration.lineThrough
+                                                  : null,
+                                            ),
+                                          ),
+                                          subtitle: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                "Código: $codigo | Cantidad: $cantidad $unidad",
+                                              ),
+                                              Row(
+                                                children: [
+                                                  Chip(
+                                                    label: Text(tipoDestino),
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    backgroundColor:
+                                                        Colors.blue.shade50,
+                                                  ),
+                                                ],
+                                              ),
+                                              if (comentario != null &&
+                                                  comentario
+                                                      .toString()
+                                                      .isNotEmpty)
+                                                Text(
+                                                  "Obs: $comentario",
+                                                  style: const TextStyle(
+                                                    color: Colors.orange,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                          trailing: IconButton(
+                                            icon: Icon(
+                                              Icons.comment,
+                                              color:
+                                                  (comentario != null &&
+                                                      comentario
+                                                          .toString()
+                                                          .isNotEmpty)
+                                                  ? Colors.orange
+                                                  : Colors.grey,
+                                            ),
+                                            tooltip: "Agregar observación",
+                                            onPressed: () =>
+                                                mostrarDialogoComentario(
+                                                  itemId,
+                                                  recibido,
+                                                  comentario,
+                                                ),
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ],
+                                );
                               },
-                              icon: const Icon(Icons.save),
-                              label: const Text("Actualizar pedido"),
                             ),
-                          ),
-                        ],
-                      ),
-                      if (puedeFinalizarRecepcion) ...[
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: procesandoRecepcion
-                                ? null
-                                : marcarPedidoRecibido,
-                            icon: const Icon(Icons.check_circle),
-                            label: const Text("Finalizar recepción"),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+      ),
     );
   }
 }

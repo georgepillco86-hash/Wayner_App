@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/pedidos_service.dart';
-import 'bodega_pedido_detalle_screen.dart';
+import '../../saldos/presentation/screens/barcode_scanner_screen.dart'; // 🔥 Importación del escáner
 
 class BodegaPedidosScreen extends StatefulWidget {
   const BodegaPedidosScreen({super.key});
@@ -157,7 +157,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
         final id = pedido["id"]?.toString().toLowerCase() ?? "";
         final codigo = pedido["codigo_pedido"]?.toString().toLowerCase() ?? "";
         final usuario = pedido["usuario"]?.toString().toLowerCase() ?? "";
-        // 🔥 Añadimos el proveedor a los parámetros de búsqueda
+
         final proveedor =
             pedido["proveedor"]?.toString().toLowerCase() ??
             pedido["proveedores"]?.toString().toLowerCase() ??
@@ -229,21 +229,207 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
     );
   }
 
+  // 🔥 NUEVO FLUJO: Abrir modal RPA centrado
   Future<void> abrirDetalle(dynamic pedido) async {
     final pedidoId = int.tryParse(pedido["id"].toString());
+    final proveedorSeleccionado =
+        pedido["proveedor"]?.toString() ?? "SIN PROVEEDOR";
 
     if (pedidoId == null) return;
 
-    final actualizado = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => BodegaPedidoDetalleScreen(pedidoId: pedidoId),
-      ),
-    );
+    mostrarDialogoRPA(pedidoId, proveedorSeleccionado);
+  }
 
-    if (actualizado == true) {
-      await cargarPedidos();
-    }
+  // 🔥 INTERFAZ DEL DIÁLOGO CENTRAL PARA CARGAR FACTURA SRI 🔥
+  void mostrarDialogoRPA(int pedidoId, String proveedor) {
+    final TextEditingController claveController = TextEditingController();
+    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Bloquea el cierre tocando fuera
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    "Cargar Factura (SRI)",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  if (!isSubmitting)
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                ],
+              ),
+              content: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Pedido #$pedidoId - $proveedor",
+                      style: const TextStyle(
+                        color: Colors.blueGrey,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // 🔥 Mostrar Loader o el Input dependiendo del estado
+                    if (isSubmitting)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20.0),
+                        child: Center(
+                          child: Column(
+                            children: [
+                              CircularProgressIndicator(),
+                              SizedBox(height: 16),
+                              Text(
+                                "Procesando autorización...",
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                "Por favor, no cierres la aplicación.",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    else
+                      TextFormField(
+                        controller: claveController,
+                        keyboardType: TextInputType.number,
+                        maxLength: 49,
+                        decoration: InputDecoration(
+                          labelText: "Clave de Acceso (49 dígitos)",
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: const Icon(
+                              Icons.qr_code_scanner,
+                              color: Colors.blue,
+                            ),
+                            onPressed: () async {
+                              // 🔥 Reutilizamos tu pantalla de escáner existente
+                              final String? codigoEscaneado =
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const BarcodeScannerScreen(),
+                                    ),
+                                  );
+
+                              if (codigoEscaneado != null &&
+                                  codigoEscaneado.isNotEmpty) {
+                                claveController.text = codigoEscaneado;
+                                formKey.currentState?.validate();
+                              }
+                            },
+                          ),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return "Por favor ingresa la clave.";
+                          }
+                          if (value.length != 49) {
+                            return "Debe tener exactamente 49 dígitos (tiene ${value.length}).";
+                          }
+                          if (double.tryParse(value) == null) {
+                            return "Solo se permiten números.";
+                          }
+                          return null;
+                        },
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                if (!isSubmitting)
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text(
+                      "Cancelar",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                if (!isSubmitting)
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue.shade800,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
+                    ),
+                    onPressed: () async {
+                      if (formKey.currentState!.validate()) {
+                        setDialogState(() {
+                          isSubmitting = true;
+                        });
+
+                        final exito = await service.enviarClaveSRI(
+                          pedidoId: pedidoId,
+                          proveedor: proveedor,
+                          claveAcceso: claveController.text.trim(),
+                        );
+
+                        if (!context.mounted) return;
+
+                        if (exito) {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                "Factura procesada y validada correctamente",
+                              ),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                          cargarPedidos();
+                        } else {
+                          setDialogState(() {
+                            isSubmitting = false;
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text("Error: Autorización no válida"),
+                              backgroundColor: Colors.red,
+                              duration: Duration(seconds: 4),
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    child: const Text(
+                      "Continuar",
+                      style: TextStyle(fontSize: 16),
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget buildFiltros() {
@@ -393,7 +579,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                             ) ??
                             0;
 
-                        // Identificamos el nombre del proveedor para mostrarlo
                         final proveedor =
                             pedido["proveedor"] ??
                             pedido["proveedores"] ??
@@ -402,7 +587,9 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                         return Card(
                           margin: const EdgeInsets.only(bottom: 10),
                           child: InkWell(
-                            onTap: () => abrirDetalle(pedido),
+                            onTap: () => abrirDetalle(
+                              pedido,
+                            ), // 🔥 Llama al Nuevo Diálogo
                             borderRadius: BorderRadius.circular(12),
                             child: Padding(
                               padding: const EdgeInsets.all(14),
@@ -424,7 +611,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            // 🔥 TÍTULO ACTUALIZADO
                                             Text(
                                               "Orden de pedido #${pedido["id"]}",
                                               style: const TextStyle(
@@ -442,7 +628,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                                             Text(
                                               "Estado: ${pedido["estado"] ?? ""}",
                                             ),
-                                            // 🔥 LÍNEA DE PROVEEDOR AÑADIDA
                                             Text(
                                               "Proveedor: $proveedor",
                                               style: const TextStyle(

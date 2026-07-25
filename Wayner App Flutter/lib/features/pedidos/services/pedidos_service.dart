@@ -195,7 +195,6 @@ class PedidosService {
     throw Exception("Error al obtener texto por proveedor");
   }
 
-  // 🔥 NUEVO: Requerido por el GenerarPedidoProveedorDialog (Mismo endpoint que arriba)
   Future<Map<String, dynamic>> obtenerTextosProveedor(int pedidoId) async {
     final response = await http.get(
       Uri.parse("$baseUrl/$pedidoId/proveedores-texto"),
@@ -210,9 +209,6 @@ class PedidosService {
     throw Exception("Error al obtener los textos del proveedor");
   }
 
-  // 🔥 NUEVO: Requerido por el GenerarPedidoProveedorDialog para ver los costos
-  // 🔥 NUEVO: Requerido por el GenerarPedidoProveedorDialog para ver los costos
-  // Se quitaron las llaves {} de 'meses' para que acepte el 3er argumento posicional
   Future<List<dynamic>> obtenerHistorialCostos(String codigo, int meses) async {
     final uri = Uri.parse(
       "$baseUrl/producto/$codigo/historial-costos",
@@ -247,7 +243,7 @@ class PedidosService {
   Future<Map<String, dynamic>> agregarItemPedido({
     required int pedidoId,
     required String codigoProducto,
-    required dynamic cantidad, // 🔥 CAMBIADO A DYNAMIC
+    required dynamic cantidad,
     String? unidad,
     String? notaCompra,
     String tipoDestino = "VENTA",
@@ -275,7 +271,7 @@ class PedidosService {
   Future<Map<String, dynamic>> actualizarCantidadItemPedido({
     required int pedidoId,
     required int itemId,
-    required dynamic cantidad, // 🔥 CAMBIADO A DYNAMIC
+    required dynamic cantidad,
   }) async {
     final response = await http.patch(
       Uri.parse("$baseUrl/$pedidoId/items/$itemId"),
@@ -582,5 +578,51 @@ class PedidosService {
     }
 
     throw Exception("Error al obtener cantidad recomendada");
+  }
+
+  // 🔥 NUEVO MÉTODO AÑADIDO: Notifica a la base de datos central que el proveedor fue contactado
+  Future<Map<String, dynamic>> notificarEnvioProveedor({
+    required int pedidoId,
+    required String proveedor,
+  }) async {
+    final response = await http.patch(
+      Uri.parse("$baseUrl/$pedidoId/notificar-proveedor"),
+      headers: await AuthHeaders.json(),
+      body: jsonEncode({"proveedor": proveedor}),
+    );
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
+      return json["data"] ?? {};
+    }
+
+    throw Exception("Error al notificar envío al proveedor");
+  }
+
+  // 🔥 NUEVO MÉTODO AÑADIDO: Enviar clave de acceso SRI al backend (RPA)
+  Future<bool> enviarClaveSRI({
+    required int pedidoId,
+    required String proveedor,
+    required String claveAcceso,
+  }) async {
+    try {
+      final uri = Uri.parse("$baseUrl/$pedidoId/sri-clave");
+
+      final response = await http.post(
+        uri,
+        headers: await AuthHeaders.json(),
+        body: jsonEncode({"proveedor": proveedor, "clave_acceso": claveAcceso}),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return true;
+      } else {
+        print("Error en enviarClaveSRI: ${response.body}");
+        return false;
+      }
+    } catch (e) {
+      print("Excepción en enviarClaveSRI: $e");
+      return false;
+    }
   }
 }

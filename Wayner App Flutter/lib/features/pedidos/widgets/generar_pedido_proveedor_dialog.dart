@@ -584,19 +584,35 @@ class _GenerarPedidoProveedorDialogState
 
     await Share.shareXFiles([xFile], text: textoPlano);
 
-    // 🔥 GUARDAMOS EL PROGRESO EN CACHÉ 🔥
-    setState(() {
-      proveedoresEnviados.add(proveedor);
-    });
-    if (_prefs != null) {
-      await _prefs!.setStringList(
-        'pedido_${widget.pedidoId}_sent',
-        proveedoresEnviados.toList(),
+    // 🔥 NUEVO: Notificamos inmediatamente al backend que este proveedor fue enviado
+    try {
+      await service.notificarEnvioProveedor(
+        pedidoId: widget.pedidoId,
+        proveedor: proveedor,
       );
-    }
 
-    if (proveedoresEnviados.length == totalProveedores) {
-      await _autoMarcarComoEnviado();
+      setState(() {
+        proveedoresEnviados.add(proveedor);
+      });
+
+      // Mantenemos la caché como respaldo visual para la app
+      if (_prefs != null) {
+        await _prefs!.setStringList(
+          'pedido_${widget.pedidoId}_sent',
+          proveedoresEnviados.toList(),
+        );
+      }
+
+      // Si ya se enviaron todos, actualizamos el estado maestro
+      if (proveedoresEnviados.length == totalProveedores) {
+        await _autoMarcarComoEnviado();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error al notificar a la base de datos: $e")),
+        );
+      }
     }
   }
 
