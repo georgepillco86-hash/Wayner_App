@@ -956,3 +956,37 @@ class PedidoService:
     def get_historial_costos(self, codigo: str, meses: int) -> list[dict[str, Any]]:
         # Ya no filtramos por fecha aquí para permitir historiales antiguos si no hay recientes
         return self.repository.get_cost_history_provider(codigo)
+
+    # 🔥 NUEVO MÉTODO: Marca los items de un proveedor como notificados 🔥
+    def notificar_envio_proveedor(self, pedido_id: int, proveedor: str) -> dict:
+        pedido = self.repository.get_order(pedido_id)
+
+        if not pedido:
+            raise NotFoundError("Pedido no encontrado")
+
+        proveedor = self._validate_text(proveedor, "El proveedor")
+
+        # Actualiza el estado de notificación en la base de datos (Requiere actualización en pedido_repository.py)
+        self.repository.notificar_proveedor_pedido(pedido_id, proveedor)
+
+        return {
+            "pedido_id": pedido_id,
+            "proveedor": proveedor,
+            "estado_notificacion": True,
+            "mensaje": f"Se ha notificado al proveedor {proveedor} correctamente."
+        }
+
+    def registrar_documento_sri(self, pedido_id: int, payload: Any) -> dict:
+        pedido = self.repository.get_order(pedido_id)
+        if not pedido:
+            raise NotFoundError("Pedido no encontrado")
+            
+        doc_id = self.repository.registrar_documento_sri(
+            pedido_id=pedido_id,
+            proveedor=payload.proveedor,
+            clave_acceso=payload.clave_acceso
+        )
+        return {"id": doc_id, "mensaje": "Clave enviada al encolador RPA exitosamente"}
+
+    def obtener_tareas_rpa_pendientes(self) -> list[dict]:
+        return self.repository.obtener_tareas_rpa_pendientes()

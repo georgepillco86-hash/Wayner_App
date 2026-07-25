@@ -854,6 +854,7 @@ class PedidoRepository:
         pedidos_db.execute(query, (tipo_destino, item_id, pedido_id))
 
     def list_orders_bodega(self, limit: int = 100) -> list[dict[str, Any]]:
+        # 🔥 ACTUALIZADO: Agrupa por proveedor y permite visualizar fragmentos notificados 🔥
         query = """
         SELECT
             p.id,
@@ -865,8 +866,8 @@ class PedidoRepository:
             p.fecha_creacion,
             p.fecha_envio,
             p.fecha_recepcion,
+            COALESCE(pr.nombre, 'SIN PROVEEDOR') AS proveedor,
             COUNT(pi.id) AS total_items,
-            STRING_AGG(DISTINCT pr.nombre, ', ') AS proveedores,
             SUM(
                 CASE
                     WHEN pi.recibido = true THEN 1
@@ -881,11 +882,11 @@ class PedidoRepository:
                 END
             ) AS total_observaciones
         FROM pedidos p
-        LEFT JOIN pedido_items pi
+        JOIN pedido_items pi
             ON pi.pedido_id = p.id
         LEFT JOIN proveedores pr 
             ON pr.id = pi.proveedor_id
-        WHERE p.estado IN ('ENVIADO', 'RECIBIDO')
+        WHERE (pi.notificado = true OR p.estado IN ('ENVIADO', 'RECIBIDO'))
         GROUP BY
             p.id,
             p.codigo_pedido,
@@ -894,7 +895,8 @@ class PedidoRepository:
             p.observacion,
             p.fecha_creacion,
             p.fecha_envio,
-            p.fecha_recepcion
+            p.fecha_recepcion,
+            pr.nombre
         ORDER BY p.fecha_creacion DESC
         LIMIT %s
         """
@@ -1068,7 +1070,6 @@ class PedidoRepository:
             "recomendacion_mensual": recomendacion_mensual,
         }
 
-    # 🔥 NUEVO: Función para histórico de ventas de N días
     def get_ventas_historicas_totales(self, codigo: str, dias: int) -> float:
         query = """
         SELECT CAST(SUM(IFNULL(Egreso, 0)) AS DECIMAL(18,3)) AS total_ventas
@@ -1079,12 +1080,9 @@ class PedidoRepository:
         data = db.fetch_one(query, (codigo, codigo, dias))
         return float(data.get("total_ventas") or 0) if data else 0.0
 
-    # 🔥 NUEVO: Función para obtener el costo más bajo 
-# 🔥 1. MEJOR COSTO: Filtro estricto de compras y búsqueda sin límite de tiempo
     def get_lowest_cost_provider(self, codigo: str, meses: int = 3) -> dict[str, Any] | None:
         fecha_desde = self._restar_meses(date.today(), meses)
         
-        # Intento 1: Buscar en los últimos meses (SOLO FACTURAS DE COMPRA)
         query = """
         SELECT NombreProveedor, Costo, IVA, Fecha
         FROM v_kardexproductos
@@ -1097,7 +1095,6 @@ class PedidoRepository:
         """
         row = db.fetch_one(query, (codigo, codigo, fecha_desde))
 
-        # Intento 2 (Fallback): Si no hay compras recientes, buscar la MÁS RECIENTE en toda la historia
         if not row:
             query_fallback = """
             SELECT NombreProveedor, Costo, IVA, Fecha
@@ -1131,9 +1128,7 @@ class PedidoRepository:
             }
         return None
 
-    # 🔥 2. HISTORIAL: Filtro estricto de compras y cálculo del costo final (neto)
     def get_cost_history_provider(self, codigo: str) -> list[dict[str, Any]]:
-        # Sin límite de meses para asegurar que traiga los datos antiguos si es necesario
         query = """
         SELECT Fecha, Costo, IVA, NombreDocumento, NombreProveedor
         FROM v_kardexproductos
@@ -1158,7 +1153,6 @@ class PedidoRepository:
             except ValueError:
                 iva_porcentaje = 15.0 if iva_crudo in ["S", "SI", "1", "TRUE", "Y", "YES"] else 0.0
 
-            # Calculamos el costo con IVA incluido
             costo_final = costo_base * (1 + (iva_porcentaje / 100.0))
             
             if prov not in ultimo_costo_prov or abs(costo_base - ultimo_costo_prov[prov]) >= 0.02:
@@ -1176,3 +1170,42 @@ class PedidoRepository:
                 ultimo_costo_prov[prov] = costo_base
                 
         return resultado
+
+    # 🔥 NUEVO MÉTODO AÑADIDO: Marca los items de un proveedor como notificados 🔥
+    def notificar_proveedor_pedido(self, pedido_id: int, proveedor_nombre: str) -> None:
+        if proveedor_nombre.strip().upper() == "SIN PROVEEDOR":
+            query = """
+            UPDATE pedido_items
+            SET notificado = true
+            WHERE pedido_id = %s AND proveedor_id IS NULL
+            """
+            pedidos_db.execute(query, (pedido_id,))
+        else:
+            query = """
+            UPDATE pedido_items
+            SET notificado = true
+            WHERE pedido_id = %s 
+              AND proveedor_id = (
+                  SELECT id FROM proveedores 
+                  WHERE LOWER(nombre) = LOWER(%s) 
+                  LIMIT 1
+              )
+            """
+            pedidos_db.execute(query, (pedido_id, proveedor_nombre.strip()))
+
+    def registrar_documento_sri(self, pedido_id: int, proveedor: str, clave_acceso: str) -> int:
+        query = """
+        INSERT INTO documentos_sri (pedido_id, proveedor, clave_acceso, estado_rpa)
+        VALUES (%s, %s, %s, 'PENDIENTE')
+        RETURNING id
+        """
+        return pedidos_db.execute(query, (pedido_id, proveedor, clave_acceso))
+
+    def obtener_tareas_rpa_pendientes(self) -> list[dict[str, Any]]:
+        query = """
+        SELECT id, pedido_id, proveedor, clave_acceso, estado_rpa
+        FROM documentos_sri
+        WHERE estado_rpa = 'PENDIENTE'
+        ORDER BY fecha_registro ASC
+        """
+        return pedidos_db.fetch_all(query)

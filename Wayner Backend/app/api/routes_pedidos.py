@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request, Depends
+from pydantic import BaseModel
 
 from app.repositories.pedido_repository import PedidoRepository
 from app.schemas.pedido import (
@@ -13,11 +14,15 @@ from app.schemas.pedido import (
     PedidoItemUnidadUpdate,
     PedidoItemTipoDestinoUpdate,
     PedidoItemRecepcionUpdate,
+    DocumentoSRICreate,  # 🔥 NUEVO ESQUEMA AÑADIDO
 )
 from app.services.pedido_service import PedidoService
 from app.repositories.audit_log_repository import AuditLogRepository
 from app.services.audit_log_service import AuditLogService
 
+# 🔥 NUEVO ESQUEMA PARA VALIDAR EL PAYLOAD DEL PROVEEDOR 🔥
+class NotificarProveedorPayload(BaseModel):
+    proveedor: str
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 service = PedidoService(PedidoRepository())
@@ -96,7 +101,6 @@ def get_cantidad_recomendada_producto(codigo: str):
         "Cantidad recomendada obtenida exitosamente",
     )
 
-# 🔥 NUEVO ENDPOINT: Historial de Costos 🔥
 @router.get("/producto/{codigo}/historial-costos")
 def obtener_historial_costos(
     codigo: str, 
@@ -439,3 +443,50 @@ def marcar_pedido_recibido(
 @router.get("/producto/{codigo}/mejor-costo")
 def obtener_mejor_costo(codigo: str, meses: int = Query(default=3, ge=1, le=12)):
      return ok(service.repository.get_lowest_cost_provider(codigo, meses=meses), "Mejor costo")
+
+
+# 🔥 NUEVO ENDPOINT: Notificar envío a proveedor específico 🔥
+@router.patch("/{pedido_id}/notificar-proveedor")
+def notificar_envio_proveedor(
+    pedido_id: int,
+    payload: NotificarProveedorPayload,
+    request: Request,
+):
+    # Llama a la capa de servicio para que actualice los items de este proveedor en la BD
+    data = service.notificar_envio_proveedor(pedido_id, payload.proveedor)
+
+    registrar_log_negocio(
+        request,
+        accion="PROVEEDOR_NOTIFICADO",
+        modulo="PEDIDOS",
+        detalle=f"Proveedor '{payload.proveedor}' notificado para pedido #{pedido_id}",
+    )
+
+    return ok(data, "Proveedor notificado exitosamente")
+
+
+# ==========================================
+# 🔥 NUEVOS ENDPOINTS: INTEGRACIÓN RPA (SRI) 🔥
+# ==========================================
+
+@router.post("/{pedido_id}/sri-clave")
+def registrar_clave_sri(
+    pedido_id: int,
+    payload: DocumentoSRICreate,
+    request: Request,
+):
+    data = service.registrar_documento_sri(pedido_id, payload)
+
+    registrar_log_negocio(
+        request,
+        accion="CLAVE_SRI_REGISTRADA",
+        modulo="RECEPCION",
+        detalle=f"Clave de acceso enviada a RPA para pedido #{pedido_id}, proveedor: {payload.proveedor}",
+    )
+    return ok(data, "Clave SRI registrada para procesamiento")
+
+
+@router.get("/rpa/tareas-pendientes")
+def obtener_tareas_rpa():
+    data = service.obtener_tareas_rpa_pendientes()
+    return ok(data, "Tareas pendientes obtenidas")

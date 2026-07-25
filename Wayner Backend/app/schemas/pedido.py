@@ -192,3 +192,17 @@ class PedidoItemRecepcionUpdate(BaseModel):
 
         value = value.strip()
         return value or None
+
+
+# ==========================================
+# 🔥 ESQUEMA: INTEGRACIÓN RPA (SRI) 🔥
+# ==========================================
+
+class DocumentoSRICreate(BaseModel):
+    proveedor: str
+    clave_acceso: str = Field(
+        ..., 
+        min_length=49, 
+        max_length=49, 
+        description="Clave de acceso de 49 dígitos"
+    )
