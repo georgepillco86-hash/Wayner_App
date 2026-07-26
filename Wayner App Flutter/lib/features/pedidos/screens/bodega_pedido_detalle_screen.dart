@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../services/pedidos_service.dart';
 
 class BodegaPedidoDetalleScreen extends StatefulWidget {
   final int pedidoId;
-  final String proveedorFiltro; // 🔥 Parámetro para saber qué proveedor mostrar
+  final String proveedorFiltro;
 
   const BodegaPedidoDetalleScreen({
     super.key,
@@ -23,11 +25,154 @@ class _BodegaPedidoDetalleScreenState extends State<BodegaPedidoDetalleScreen> {
   String? errorMessage;
   Map<String, dynamic>? detallePedido;
 
+  // Variables para WebSockets y control de la UI
+  WebSocketChannel? _channel;
+  bool _isRpaDialogVisible =
+      false; // 🔥 NUEVO: Rastrea si el loading está abierto
+
   @override
   void initState() {
     super.initState();
     cargarDetalle();
+    _conectarWebSocketRPA();
   }
+
+  @override
+  void dispose() {
+    _channel?.sink.close();
+    super.dispose();
+  }
+
+  // ==========================================
+  // 🔥 LÓGICA DE WEBSOCKETS Y CONTROL RPA
+  // ==========================================
+  void _conectarWebSocketRPA() {
+    final wsUrl = Uri.parse(
+      'ws://TU_IP_AQUI/pedidos/rpa/ws/${widget.pedidoId}',
+    );
+
+    try {
+      _channel = WebSocketChannel.connect(wsUrl);
+
+      _channel?.stream.listen(
+        (message) {
+          // 1. Lo primero que hace al recibir mensaje es cerrar el Loading
+          _cerrarCargaRPA();
+
+          final data = jsonDecode(message);
+          final estado = data['estado'];
+          final mensaje = data['mensaje'] ?? 'Alerta del bot RPA';
+
+          // 2. Evalúa la respuesta
+          if (estado == 'EXITO') {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(mensaje), backgroundColor: Colors.green),
+            );
+            cargarDetalle();
+
+            // Opcional: Aquí podrías forzar el regreso a la lista de pedidos
+            // Navigator.pop(context, true);
+          } else {
+            // Si es DUPLICADO, ERROR_CLAVE o TIMEOUT, muestra el diálogo de decisión
+            _mostrarAlertaRPA(estado, mensaje);
+          }
+        },
+        onError: (error) {
+          _cerrarCargaRPA();
+          debugPrint("Error en WebSocket RPA: $error");
+        },
+        onDone: () {
+          debugPrint("WebSocket RPA cerrado");
+        },
+      );
+    } catch (e) {
+      debugPrint("No se pudo iniciar WebSocket RPA: $e");
+    }
+  }
+
+  // 🔥 NUEVO: Función para mostrar el escudo de carga
+  void _mostrarCargaRPA() {
+    _isRpaDialogVisible = true;
+    showDialog(
+      context: context,
+      barrierDismissible:
+          false, // El usuario no puede tocar fuera para cerrarlo
+      builder: (context) {
+        return const AlertDialog(
+          content: Row(
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 20),
+              Expanded(
+                child: Text(
+                  "Sincronizando con ERP BITS...\nEl RPA está procesando la orden.",
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    ).then((_) {
+      // Cuando el diálogo se cierra por cualquier motivo, actualizamos el estado
+      _isRpaDialogVisible = false;
+    });
+  }
+
+  // 🔥 NUEVO: Función para cerrar el escudo de carga de forma segura
+  void _cerrarCargaRPA() {
+    if (_isRpaDialogVisible) {
+      // Usa rootNavigator para asegurar que cierra el diálogo y no la pantalla
+      Navigator.of(context, rootNavigator: true).pop();
+      _isRpaDialogVisible = false;
+    }
+  }
+
+  void _mostrarAlertaRPA(String estado, String mensaje) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              const SizedBox(width: 8),
+              Text(estado == 'DUPLICADO' ? "XML Existente" : "Atención RPA"),
+            ],
+          ),
+          content: Text(mensaje),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context); // Cierra este diálogo
+                // TODO: Llamar a la API para notificar al RPA que ANULE
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Orden de anulación enviada")),
+                );
+              },
+              child: const Text("Anular", style: TextStyle(color: Colors.red)),
+            ),
+            if (estado ==
+                'DUPLICADO') // Solo mostrar "Sobrescribir" si es duplicado
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  // TODO: Llamar a la API para notificar al RPA que SOBRESCRIBA
+                  // _mostrarCargaRPA(); // Podrías volver a levantar el loading aquí
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Orden de sobrescribir enviada"),
+                    ),
+                  );
+                },
+                child: const Text("Sobrescribir"),
+              ),
+          ],
+        );
+      },
+    );
+  }
+  // ==========================================
 
   Future<void> cargarDetalle() async {
     setState(() {
@@ -45,13 +190,11 @@ class _BodegaPedidoDetalleScreenState extends State<BodegaPedidoDetalleScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-
       setState(() {
         errorMessage = "No se pudo cargar el detalle del pedido";
       });
     } finally {
       if (!mounted) return;
-
       setState(() {
         isLoading = false;
       });
@@ -74,9 +217,7 @@ class _BodegaPedidoDetalleScreenState extends State<BodegaPedidoDetalleScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Error al actualizar la recepción del item"),
-        ),
+        const SnackBar(content: Text("Error al actualizar la recepción")),
       );
     }
   }
@@ -131,7 +272,6 @@ class _BodegaPedidoDetalleScreenState extends State<BodegaPedidoDetalleScreen> {
     final estado = detallePedido?["estado"] ?? "";
     final observacionGeneral = detallePedido?["observacion"] ?? "";
 
-    // 🔥 FILTRAMOS LOS PROVEEDORES PARA MOSTRAR ÚNICAMENTE EL QUE CORRESPONDE 🔥
     final todosLosProveedores =
         detallePedido?["proveedores"] as List<dynamic>? ?? [];
     final proveedoresFiltrados = todosLosProveedores.where((grupo) {
@@ -153,6 +293,22 @@ class _BodegaPedidoDetalleScreenState extends State<BodegaPedidoDetalleScreen> {
             onPressed: () => Navigator.pop(context, true),
           ),
         ),
+
+        // 🔥 NUEVO: Botón para disparar el RPA
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () async {
+            // 1. Levantas la barrera de carga
+            _mostrarCargaRPA();
+
+            // 2. TODO: Llama a tu API REST para indicar que este pedido
+            // entra en estado 'PENDIENTE' para que el agente Python lo tome.
+            // await service.enviarAlColaRPA(widget.pedidoId, claveDeAcceso);
+          },
+          icon: const Icon(Icons.sync),
+          label: const Text("Procesar Factura"),
+          backgroundColor: Colors.blueGrey,
+        ),
+
         body: isLoading
             ? const Center(child: CircularProgressIndicator())
             : errorMessage != null
@@ -167,7 +323,6 @@ class _BodegaPedidoDetalleScreenState extends State<BodegaPedidoDetalleScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Cabecera informativa
                     Card(
                       elevation: 2,
                       child: Padding(
@@ -201,8 +356,6 @@ class _BodegaPedidoDetalleScreenState extends State<BodegaPedidoDetalleScreen> {
                       ),
                     ),
                     const SizedBox(height: 10),
-
-                    // Lista de productos del proveedor seleccionado
                     Expanded(
                       child: proveedoresFiltrados.isEmpty
                           ? const Center(

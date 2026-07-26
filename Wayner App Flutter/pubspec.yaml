@@ -53,6 +53,7 @@ dependencies:
   path_provider: ^2.1.6
   share_plus: ^13.2.1
   url_launcher: ^6.3.2
+  web_socket_channel: ^3.0.0  # 🔥 NUEVA DEPENDENCIA AÑADIDA PARA EL RPA
 
 dev_dependencies:
   flutter_test:
