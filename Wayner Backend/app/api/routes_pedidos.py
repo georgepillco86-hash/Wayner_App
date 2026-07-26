@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request, Depends
+from fastapi import APIRouter, Query, Request, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+from typing import Dict
 
 from app.repositories.pedido_repository import PedidoRepository
 from app.schemas.pedido import (
@@ -23,6 +24,33 @@ from app.services.audit_log_service import AuditLogService
 # 🔥 NUEVO ESQUEMA PARA VALIDAR EL PAYLOAD DEL PROVEEDOR 🔥
 class NotificarProveedorPayload(BaseModel):
     proveedor: str
+
+# ==========================================
+# 🔥 GESTOR DE WEBSOCKETS (FLUTTER <-> RPA)
+# ==========================================
+class ConnectionManager:
+    def __init__(self):
+        # Almacena las conexiones activas usando el pedido_id como llave
+        self.active_connections: Dict[int, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, pedido_id: int):
+        await websocket.accept()
+        self.active_connections[pedido_id] = websocket
+
+    def disconnect(self, pedido_id: int):
+        if pedido_id in self.active_connections:
+            del self.active_connections[pedido_id]
+
+    async def send_json_to_client(self, pedido_id: int, message: dict):
+        if pedido_id in self.active_connections:
+            websocket = self.active_connections[pedido_id]
+            await websocket.send_json(message)
+
+manager = ConnectionManager()
+
+class NotificacionRPA(BaseModel):
+    estado: str
+    mensaje: str
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 service = PedidoService(PedidoRepository())
@@ -490,3 +518,42 @@ def registrar_clave_sri(
 def obtener_tareas_rpa():
     data = service.obtener_tareas_rpa_pendientes()
     return ok(data, "Tareas pendientes obtenidas")
+
+
+# 1. Endpoint al que se conecta Flutter (vía WebSocket)
+@router.websocket("/rpa/ws/{pedido_id}")
+async def websocket_rpa(websocket: WebSocket, pedido_id: int):
+    await manager.connect(websocket, pedido_id)
+    try:
+        while True:
+            # Mantiene la conexión abierta esperando instrucciones
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(pedido_id)
+
+
+# 2. Endpoint que el BOT llama cuando hay un archivo duplicado o error de clave
+@router.patch("/rpa/notificar-estado/{pedido_id}")
+async def notificar_estado_rpa(pedido_id: int, payload: NotificacionRPA):
+    # Enviar mensaje instantáneo a la app móvil de Flutter
+    await manager.send_json_to_client(pedido_id, payload.dict())
+    return ok(None, "Notificación push enviada a Flutter")
+
+
+# 3. Endpoint que el BOT llama cuando el proceso fue un ÉXITO
+@router.patch("/rpa/completar/{pedido_id}")
+async def completar_tarea_rpa(pedido_id: int):
+    # Opcional: Lógica para actualizar DB
+    # service.marcar_rpa_completado(pedido_id)
+    
+    # Avisar a Flutter que se guardó exitosamente
+    await manager.send_json_to_client(pedido_id, {"estado": "EXITO", "mensaje": "Factura guardada correctamente en BITS."})
+    return ok(None, "Tarea RPA completada exitosamente")
+
+
+# 4. Endpoint que el BOT llama cuando falla y se rinde (Timeout, etc)
+@router.patch("/rpa/error/{pedido_id}")
+def error_tarea_rpa(pedido_id: int):
+    # Opcional: Lógica para actualizar DB
+    # service.marcar_rpa_error(pedido_id)
+    return ok(None, "Error registrado en base de datos")
