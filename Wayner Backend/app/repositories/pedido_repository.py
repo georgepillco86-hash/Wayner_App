@@ -1171,7 +1171,6 @@ class PedidoRepository:
                 
         return resultado
 
-    # 🔥 NUEVO MÉTODO AÑADIDO: Marca los items de un proveedor como notificados 🔥
     def notificar_proveedor_pedido(self, pedido_id: int, proveedor_nombre: str) -> None:
         if proveedor_nombre.strip().upper() == "SIN PROVEEDOR":
             query = """
@@ -1209,3 +1208,68 @@ class PedidoRepository:
         ORDER BY fecha_registro ASC
         """
         return pedidos_db.fetch_all(query)
+    
+    # ==========================================
+    # 🔥 NUEVO MÉTODO AÑADIDO: ACTUALIZAR RPA
+    # ==========================================
+    def actualizar_estado_documento_rpa(self, documento_id: int, estado: str, mensaje: str) -> int | None:
+        # 1. Obtenemos el pedido_id asociado a este documento para notificar correctamente
+        query_select = "SELECT pedido_id FROM documentos_sri WHERE id = %s"
+        row = pedidos_db.fetch_one(query_select, (documento_id,))
+        
+        if not row:
+            return None
+            
+        pedido_id = row["pedido_id"]
+        
+        # 2. Ejecutamos la actualización del estado y observación
+        query_update = """
+        UPDATE documentos_sri
+        SET estado_rpa = %s,
+            observacion_rpa = %s,
+            fecha_actualizacion = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """
+        pedidos_db.execute(query_update, (estado, mensaje, documento_id))
+        
+        # 3. Retornamos el pedido_id para que el router sepa en qué canal de WebSocket transmitir
+        return pedido_id
+    
+
+    def guardar_xml_documento(self, documento_id: int, xml_data: str) -> bool:
+        """Guarda el contenido del archivo XML en la tabla documentos_sri."""
+        try:
+            query = """
+            UPDATE documentos_sri 
+            SET xml_data = %s,
+                fecha_actualizacion = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """
+            pedidos_db.execute(query, (xml_data, documento_id))
+            return True
+        except Exception as e:
+            print(f"Error al guardar XML en DB: {e}")
+            return False
+        
+    def consultar_estado_rpa(self, documento_id: int) -> str:
+        """Consulta qué botón presionó el usuario en la app móvil."""
+        try:
+            # Quitamos el prefijo 'ferrotienda.' para mantener la consistencia con el resto de tu código
+            query = "SELECT estado_rpa FROM documentos_sri WHERE id = %s"
+            
+            # 🔥 CORRECCIÓN CLAVE: Usamos 'pedidos_db' (sin self.) 
+            row = pedidos_db.fetch_one(query, (documento_id,))
+            
+            return row["estado_rpa"] if row else "DESCONOCIDO"
+        except Exception as e:
+            print(f"Error en BD al consultar estado RPA: {e}")
+            return "ERROR"
+    
+    def get_documento_sri(self, documento_id: int) -> dict[str, Any] | None:
+        """Obtiene toda la información de un documento SRI guardado, incluyendo el XML."""
+        query = """
+        SELECT id, pedido_id, proveedor, clave_acceso, xml_data
+        FROM documentos_sri
+        WHERE id = %s
+        """
+        return pedidos_db.fetch_one(query, (documento_id,))

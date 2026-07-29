@@ -990,3 +990,14 @@ class PedidoService:
 
     def obtener_tareas_rpa_pendientes(self) -> list[dict]:
         return self.repository.obtener_tareas_rpa_pendientes()
+    
+    def actualizar_estado_rpa(self, documento_id: int, estado: str, mensaje: str) -> int:
+        return self.repository.actualizar_estado_documento_rpa(documento_id, estado, mensaje)
+    
+    def guardar_xml_rpa(self, documento_id: int, xml_data: str) -> bool:
+        return self.repository.guardar_xml_documento(documento_id, xml_data)
+    
+    def consultar_estado_rpa(self, documento_id: int) -> str:
+        return self.repository.consultar_estado_rpa(documento_id)
+    
+    
