@@ -1,7 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:http/http.dart' as http;
+import 'recepcion_escaner_screen.dart'; // Ajusta la ruta si lo guardaste en otra carpeta
 
 import '../services/pedidos_service.dart';
-import '../../saldos/presentation/screens/barcode_scanner_screen.dart'; // 🔥 Importación del escáner
+import '../../saldos/presentation/screens/barcode_scanner_screen.dart';
 
 class BodegaPedidosScreen extends StatefulWidget {
   const BodegaPedidosScreen({super.key});
@@ -29,10 +35,154 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
     "COMPLETOS",
   ];
 
+  WebSocketChannel? _channel;
+
   @override
   void initState() {
     super.initState();
     cargarPedidos();
+  }
+
+  @override
+  void dispose() {
+    busquedaController.dispose();
+    _channel?.sink.close();
+    super.dispose();
+  }
+
+  // ==========================================
+  // 🔥 LÓGICA DE WEBSOCKETS
+  // ==========================================
+  void _conectarWebSocketRPA({
+    required int pedidoId,
+    required Function(String estado, String mensaje, dynamic data) onMessage,
+  }) {
+    final wsUrl = Uri.parse(
+      'ws://192.168.2.79:5000/api/pedidos/rpa/ws/$pedidoId',
+    );
+
+    try {
+      _channel?.sink.close();
+      _channel = WebSocketChannel.connect(wsUrl);
+
+      _channel?.stream.listen(
+        (message) {
+          final data = jsonDecode(message);
+          final estado = data['estado'] ?? 'DESCONOCIDO';
+          final mensaje = data['mensaje'] ?? 'Alerta del bot RPA';
+
+          onMessage(estado, mensaje, data);
+        },
+        onError: (error) {
+          debugPrint("Error en WebSocket RPA: $error");
+        },
+        onDone: () {
+          debugPrint("WebSocket RPA cerrado");
+        },
+      );
+    } catch (e) {
+      debugPrint("No se pudo iniciar WebSocket RPA: $e");
+    }
+  }
+
+  void _mostrarAlertaDuplicado(int pedidoId, int documentoId, String mensaje) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (alertContext) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              SizedBox(width: 8),
+              Text("XML Existente"),
+            ],
+          ),
+          content: Text(mensaje),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(alertContext);
+                try {
+                  final url = Uri.parse(
+                    "http://192.168.2.79:5000/api/pedidos/rpa/notificar-estado/$documentoId",
+                  );
+                  await http.patch(
+                    url,
+                    body: jsonEncode({
+                      "estado": "ANULAR",
+                      "mensaje": "Cancelado por el usuario",
+                    }),
+                    headers: {"Content-Type": "application/json"},
+                  );
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("Orden de anulación enviada"),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  debugPrint("Error al anular: $e");
+                }
+              },
+              child: const Text("Anular", style: TextStyle(color: Colors.red)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(alertContext);
+                try {
+                  final url = Uri.parse(
+                    "http://192.168.2.79:5000/api/pedidos/rpa/notificar-estado/$documentoId",
+                  );
+                  await http.patch(
+                    url,
+                    body: jsonEncode({
+                      "estado": "SOBRESCRIBIR",
+                      "mensaje": "Usuario ordenó sobrescribir",
+                    }),
+                    headers: {"Content-Type": "application/json"},
+                  );
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("Orden de sobrescribir enviada"),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  debugPrint("Error al sobrescribir: $e");
+                }
+              },
+              child: const Text("Sobrescribir"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ==========================================
+  // 🔥 FASE ESCÁNER (PUENTE)
+  // ==========================================
+  void _abrirFaseEscaner(int pedidoId, int documentoId) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("XML Cargado. Preparando cámara para escaneo físico..."),
+        backgroundColor: Colors.blue,
+      ),
+    );
+
+    // 🔥 AQUÍ ESTÁ LA MAGIA: Navegamos a la nueva pantalla
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RecepcionEscanerScreen(
+          pedidoId: pedidoId,
+          documentoId: documentoId,
+        ),
+      ),
+    );
   }
 
   Future<void> cargarPedidos() async {
@@ -229,7 +379,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
     );
   }
 
-  // 🔥 NUEVO FLUJO: Abrir modal RPA centrado
   Future<void> abrirDetalle(dynamic pedido) async {
     final pedidoId = int.tryParse(pedido["id"].toString());
     final proveedorSeleccionado =
@@ -240,7 +389,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
     mostrarDialogoRPA(pedidoId, proveedorSeleccionado);
   }
 
-  // 🔥 INTERFAZ DEL DIÁLOGO CENTRAL PARA CARGAR FACTURA SRI 🔥
   void mostrarDialogoRPA(int pedidoId, String proveedor) {
     final TextEditingController claveController = TextEditingController();
     final GlobalKey<FormState> formKey = GlobalKey<FormState>();
@@ -248,8 +396,8 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
 
     showDialog(
       context: context,
-      barrierDismissible: false, // Bloquea el cierre tocando fuera
-      builder: (BuildContext context) {
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setDialogState) {
             return AlertDialog(
@@ -266,7 +414,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                   if (!isSubmitting)
                     IconButton(
                       icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(dialogContext),
                     ),
                 ],
               ),
@@ -285,7 +433,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // 🔥 Mostrar Loader o el Input dependiendo del estado
                     if (isSubmitting)
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 20.0),
@@ -295,7 +442,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                               CircularProgressIndicator(),
                               SizedBox(height: 16),
                               Text(
-                                "Procesando autorización...",
+                                "Procesando en ERP BITS...",
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w500,
@@ -318,6 +465,9 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                         controller: claveController,
                         keyboardType: TextInputType.number,
                         maxLength: 49,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
                         decoration: InputDecoration(
                           labelText: "Clave de Acceso (49 dígitos)",
                           border: const OutlineInputBorder(),
@@ -327,7 +477,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                               color: Colors.blue,
                             ),
                             onPressed: () async {
-                              // 🔥 Reutilizamos tu pantalla de escáner existente
                               final String? codigoEscaneado =
                                   await Navigator.push(
                                     context,
@@ -339,7 +488,11 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
 
                               if (codigoEscaneado != null &&
                                   codigoEscaneado.isNotEmpty) {
-                                claveController.text = codigoEscaneado;
+                                final soloNumeros = codigoEscaneado.replaceAll(
+                                  RegExp(r'[^0-9]'),
+                                  '',
+                                );
+                                claveController.text = soloNumeros;
                                 formKey.currentState?.validate();
                               }
                             },
@@ -364,7 +517,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
               actions: [
                 if (!isSubmitting)
                   TextButton(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () => Navigator.pop(dialogContext),
                     child: const Text(
                       "Cancelar",
                       style: TextStyle(color: Colors.grey),
@@ -382,9 +535,90 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                     ),
                     onPressed: () async {
                       if (formKey.currentState!.validate()) {
+                        FocusScope.of(context).unfocus();
+
                         setDialogState(() {
                           isSubmitting = true;
                         });
+
+                        // 🔥 PASAMOS EL CONTROLADOR AL WEBSOCKET
+                        // 🔥 PASAMOS EL CONTROLADOR AL WEBSOCKET
+                        _conectarWebSocketRPA(
+                          pedidoId: pedidoId,
+                          onMessage: (estado, mensaje, data) {
+                            // 1. Ignoramos estados meramente informativos para no romper la UI
+                            if (estado == 'PROCESANDO' ||
+                                estado == 'SOBRESCRIBIR' ||
+                                estado == 'ANULAR') {
+                              return;
+                            }
+
+                            if (estado == 'EXITO') {
+                              if (Navigator.canPop(dialogContext)) {
+                                Navigator.pop(dialogContext);
+                              }
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(mensaje),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                              cargarPedidos();
+                            } else if (estado == 'DUPLICADO') {
+                              // 🔥 CORRECCIÓN 1: NO HACEMOS Navigator.pop() AQUÍ.
+                              // Dejamos que el spinner gire debajo de la alerta.
+                              int docId = data['documento_id'] ?? 0;
+                              _mostrarAlertaDuplicado(pedidoId, docId, mensaje);
+                            } else if (estado == 'REPORTE_VALIDACION') {
+                              // 🔥 CORRECCIÓN 2: Aquí SÍ cerramos el spinner porque el XML ya está procesado
+                              if (Navigator.canPop(dialogContext)) {
+                                Navigator.pop(dialogContext);
+                              }
+
+                              List<dynamic> validaciones =
+                                  data['validaciones'] ?? [];
+                              bool conErrores = data['con_errores'] ?? false;
+                              int docId = data['documento_id'] ?? 0;
+
+                              showDialog(
+                                context: context,
+                                barrierDismissible: false,
+                                builder: (_) => ValidacionXMLDialog(
+                                  pedidoId: pedidoId,
+                                  documentoId: docId,
+                                  validaciones: validaciones,
+                                  conErrores: conErrores,
+                                  onContinuar: () {
+                                    _abrirFaseEscaner(pedidoId, docId);
+                                  },
+                                  onForzar: () async {
+                                    try {
+                                      final url = Uri.parse(
+                                        "http://192.168.2.79:5000/api/pedidos/rpa/forzar-exito/$docId",
+                                      );
+                                      await http.patch(url);
+                                      if (mounted)
+                                        _abrirFaseEscaner(pedidoId, docId);
+                                    } catch (e) {
+                                      debugPrint("Error forzando: $e");
+                                    }
+                                  },
+                                ),
+                              );
+                            } else {
+                              setDialogState(() {
+                                isSubmitting = false;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(mensaje),
+                                  backgroundColor: Colors.red,
+                                  duration: const Duration(seconds: 4),
+                                ),
+                              );
+                            }
+                          },
+                        );
 
                         final exito = await service.enviarClaveSRI(
                           pedidoId: pedidoId,
@@ -395,23 +629,24 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                         if (!context.mounted) return;
 
                         if (exito) {
-                          Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text(
-                                "Factura procesada y validada correctamente",
+                                "Enviado al bot RPA. Esperando confirmación de BITS...",
                               ),
-                              backgroundColor: Colors.green,
+                              backgroundColor: Colors.blue,
+                              duration: Duration(seconds: 3),
                             ),
                           );
-                          cargarPedidos();
                         } else {
                           setDialogState(() {
                             isSubmitting = false;
                           });
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text("Error: Autorización no válida"),
+                              content: Text(
+                                "Error de red: No se pudo contactar al servidor",
+                              ),
                               backgroundColor: Colors.red,
                               duration: Duration(seconds: 4),
                             ),
@@ -509,12 +744,6 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
   }
 
   @override
-  void dispose() {
-    busquedaController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -587,9 +816,7 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
                         return Card(
                           margin: const EdgeInsets.only(bottom: 10),
                           child: InkWell(
-                            onTap: () => abrirDetalle(
-                              pedido,
-                            ), // 🔥 Llama al Nuevo Diálogo
+                            onTap: () => abrirDetalle(pedido),
                             borderRadius: BorderRadius.circular(12),
                             child: Padding(
                               padding: const EdgeInsets.all(14),
@@ -674,6 +901,195 @@ class _BodegaPedidosScreenState extends State<BodegaPedidosScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ==========================================
+// 🔥 NUEVO WIDGET: VALIDACIÓN TIPO INSTAGRAM
+// ==========================================
+class ValidacionXMLDialog extends StatefulWidget {
+  final int pedidoId;
+  final int documentoId;
+  final List<dynamic> validaciones;
+  final bool conErrores;
+  final VoidCallback onContinuar;
+  final VoidCallback onForzar;
+
+  const ValidacionXMLDialog({
+    super.key,
+    required this.pedidoId,
+    required this.documentoId,
+    required this.validaciones,
+    required this.conErrores,
+    required this.onContinuar,
+    required this.onForzar,
+  });
+
+  @override
+  State<ValidacionXMLDialog> createState() => _ValidacionXMLDialogState();
+}
+
+class _ValidacionXMLDialogState extends State<ValidacionXMLDialog> {
+  int pasoActual = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Animamos los pasos estilo historias de Instagram (1 paso cada 800ms)
+    _timer = Timer.periodic(const Duration(milliseconds: 800), (timer) {
+      if (pasoActual < widget.validaciones.length) {
+        setState(() {
+          pasoActual++;
+        });
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    bool animacionTerminada = pasoActual == widget.validaciones.length;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      contentPadding: const EdgeInsets.all(20),
+      title: Column(
+        children: [
+          Row(
+            children: List.generate(widget.validaciones.length, (index) {
+              Color colorBarra = Colors.grey.shade300;
+              if (index < pasoActual) {
+                final estado = widget.validaciones[index]['estado'];
+                colorBarra = estado == 'OK' ? Colors.green : Colors.red;
+              }
+              return Expanded(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colorBarra,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Icon(
+                widget.conErrores
+                    ? Icons.gavel_rounded
+                    : Icons.verified_rounded,
+                color: widget.conErrores ? Colors.red : Colors.green,
+                size: 28,
+              ),
+              const SizedBox(width: 10),
+              const Text(
+                "Validación SRI",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(widget.validaciones.length, (index) {
+            if (index >= pasoActual) return const SizedBox.shrink();
+
+            final val = widget.validaciones[index];
+            final esOk = val['estado'] == 'OK';
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    esOk ? Icons.check_circle : Icons.cancel,
+                    color: esOk ? Colors.green : Colors.red,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          val['paso'],
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        Text(
+                          val['detalle'],
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ),
+      ),
+      actions: [
+        if (animacionTerminada) ...[
+          if (widget.conErrores)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Recepción cancelada por errores."),
+                  ),
+                );
+              },
+              child: const Text(
+                "Cancelar",
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: widget.conErrores
+                  ? Colors.red.shade700
+                  : Colors.green.shade700,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              if (widget.conErrores) {
+                widget.onForzar();
+              } else {
+                widget.onContinuar();
+              }
+            },
+            child: Text(
+              widget.conErrores
+                  ? "Continuar con Errores"
+                  : "Ir a Escáner de Productos",
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
