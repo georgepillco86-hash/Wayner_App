@@ -11,7 +11,7 @@ class UnidadMedidaRepository:
         SELECT id, nombre, activo, fecha_creacion
         FROM unidades_medida
         WHERE activo = true
-        ORDER BY nombre ASC
+        ORDER BY prioridad ASC, nombre ASC
         """
         return pedidos_db.fetch_all(query)
 
@@ -19,7 +19,7 @@ class UnidadMedidaRepository:
         query = """
         SELECT id, nombre, activo, fecha_creacion
         FROM unidades_medida
-        ORDER BY nombre ASC
+        ORDER BY prioridad ASC, nombre ASC
         """
         return pedidos_db.fetch_all(query)
 
@@ -78,3 +78,14 @@ class UnidadMedidaRepository:
         WHERE id = %s
         """
         pedidos_db.execute(query, (unidad_id,))
+
+    # 🔥 NUEVO MÉTODO AÑADIDO: Actualiza la prioridad en la base de datos
+    def update_orden(self, orden_ids: list[int]) -> None:
+        query = """
+        UPDATE unidades_medida
+        SET prioridad = %s
+        WHERE id = %s
+        """
+        # Recorremos la lista. El 'index' (0, 1, 2...) será la nueva prioridad
+        for index, unidad_id in enumerate(orden_ids):
+            pedidos_db.execute(query, (index, unidad_id))

@@ -1,6 +1,8 @@
 from __future__ import annotations
+from typing import List
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.repositories.unidad_medida_repository import UnidadMedidaRepository
 from app.schemas.unidad_medida import UnidadMedidaCreate, UnidadMedidaUpdate
@@ -9,6 +11,9 @@ from app.services.unidad_medida_service import UnidadMedidaService
 router = APIRouter(prefix="/unidades-medida", tags=["unidades-medida"])
 service = UnidadMedidaService(UnidadMedidaRepository())
 
+# 🔥 NUEVO ESQUEMA PARA RECIBIR LA LISTA DE IDs
+class OrdenUnidadesRequest(BaseModel):
+    orden_ids: List[int]
 
 def ok(data, message: str = "Operación exitosa"):
     return {"success": True, "message": message, "data": data}
@@ -51,4 +56,12 @@ def deactivate_unit(unidad_id: int):
     return ok(
         service.deactivate(unidad_id),
         "Unidad de medida desactivada exitosamente",
+    )
+
+# 🔥 NUEVA RUTA PARA GUARDAR EL ORDEN
+@router.post("/orden")
+def update_units_order(payload: OrdenUnidadesRequest):
+    return ok(
+        service.update_orden(payload.orden_ids),
+        "Orden actualizado exitosamente"
     )

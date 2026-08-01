@@ -65,3 +65,8 @@ class UnidadMedidaService:
         self.repository.deactivate(unidad_id)
 
         return self.repository.get_by_id(unidad_id)
+
+    # 🔥 NUEVO MÉTODO AÑADIDO: Gestiona la actualización de prioridades
+    def update_orden(self, orden_ids: list[int]) -> list[dict]:
+        self.repository.update_orden(orden_ids)
+        return self.repository.list_all()
