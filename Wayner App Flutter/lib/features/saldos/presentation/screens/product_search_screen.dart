@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../../products/presentation/screens/product_detail_screen.dart';
+// Import de ProductDetailScreen eliminado porque ya no lo usamos 🎉
 import '../widgets/product_card.dart';
 import 'barcode_scanner_screen.dart';
 import 'product_search_controller.dart';
@@ -40,8 +40,6 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
   String nombreUsuario = "";
   String rolUsuario = "";
 
-  @override
-  @override
   @override
   void initState() {
     super.initState();
@@ -249,7 +247,7 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                 children: [
                   buildMenuItem(
                     icon: Icons.search,
-                    title: "Stock",
+                    title: "Inventario",
                     onTap: () {
                       Navigator.pop(context);
                     },
@@ -271,7 +269,6 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                       },
                     ),
                   ],
-                  // ... código anterior ...
                   buildMenuItem(
                     icon: Icons.report_problem_outlined,
                     title: "Ingresar Merma",
@@ -280,7 +277,7 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                         MermaScreen(
                           usuarioActual: nombreUsuario,
                           rolUsuario: rolUsuario,
-                          esModoReporte: false, // <-- Explicito: Modo Ingreso
+                          esModoReporte: false,
                         ),
                       );
                     },
@@ -295,13 +292,11 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                           MermaScreen(
                             usuarioActual: nombreUsuario,
                             rolUsuario: rolUsuario,
-                            esModoReporte:
-                                true, // <-- Explicito: Modo Reporte oculta el "+"
+                            esModoReporte: true,
                           ),
                         );
                       },
                     ),
-                    // ... resto del código ...
                     buildMenuItem(
                       icon: Icons.admin_panel_settings,
                       title: "Administrar pedidos",
@@ -315,9 +310,7 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                       icon: Icons.inventory,
                       title: "Recepción de pedidos",
                       onTap: () {
-                        abrirPantalla(
-                          BodegaPedidosScreen(),
-                        ); // 🔥 ELIMINADO EL const
+                        abrirPantalla(BodegaPedidosScreen());
                       },
                     ),
                   ],
@@ -423,7 +416,6 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
           },
           fieldViewBuilder:
               (context, textEditingController, focusNode, onFieldSubmitted) {
-                // Sincroniza el texto si el proveedor cambia externamente o se limpia
                 if (controller.selectedProvider == null) {
                   textEditingController.clear();
                 } else if (textEditingController.text !=
@@ -458,12 +450,8 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                 elevation: 4,
                 borderRadius: BorderRadius.circular(4),
                 child: Container(
-                  // FORZAMOS a que la lista mida exactamente lo mismo que el input
                   width: constraints.maxWidth,
-
-                  // ---> CORRECCIÓN AQUÍ <---
                   constraints: const BoxConstraints(maxHeight: 250),
-
                   color: Theme.of(context).colorScheme.surface,
                   child: ListView.builder(
                     padding: EdgeInsets.zero,
@@ -503,22 +491,20 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
     return Scaffold(
       drawer: buildDrawer(),
       appBar: AppBar(
-        title: const Text('Stock'),
+        title: const Text('Inventario'), // 🔥 Cambio de nombre realizado
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications_active),
-            tooltip:
-                'Notificaciones', // Cambié el tooltip para que tenga más sentido
+            tooltip: 'Notificaciones',
             onPressed: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const NotificacionesScreen()),
               );
-            }, // <-- FALTABA ESTA LLAVE DE CIERRE '}'
+            },
           ),
         ],
       ),
-      // ... aquí continúa el body: de tu Scaffold
       body: Column(
         children: [
           Padding(
@@ -561,15 +547,11 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
             ),
             value: controller.isDeepSearch,
             onChanged: (bool value) {
-              // 1. Actualizamos el estado del modo en el controlador
               controller.isDeepSearch = value;
-
-              // 2. Si hay texto escrito en el buscador, ejecutamos la búsqueda en tiempo real
               final textoActual = _searchController.text.trim();
               if (textoActual.isNotEmpty) {
                 controller.search(textoActual);
               } else {
-                // Si está vacío, solo refresca el estado del componente
                 controller.toggleDeepSearch(value);
               }
             },
@@ -638,61 +620,10 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                     itemCount: controller.products.length,
                     itemBuilder: (context, index) {
                       final product = controller.products[index];
-
-                      return InkWell(
-                        onTap: () async {
-                          // 1. Mostrar un loader para que la app no parezca trabada
-                          showDialog(
-                            context: context,
-                            barrierDismissible:
-                                false, // Evita que se cierre tocando afuera
-                            builder: (_) => const Center(
-                              child: CircularProgressIndicator(),
-                            ),
-                          );
-
-                          try {
-                            // 2. Instancias el servicio
-                            final apiService = SaldosApiService();
-
-                            // 3. Traes los datos vivos del backend usando el código del producto
-                            final datosVivos = await apiService
-                                .obtenerPrecioVivo(product.codigo);
-
-                            // 4. Actualizas el producto localmente
-                            product.precio = datosVivos['precio_vivo'];
-                            product.iva = datosVivos['iva_vivo'];
-                            product.costo = datosVivos['costo_vivo'];
-
-                            // 5. Cerrar el loader
-                            if (context.mounted) Navigator.pop(context);
-
-                            // 6. Abres la pantalla de detalle
-                            if (context.mounted) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      ProductDetailScreen(product: product),
-                                ),
-                              );
-                            }
-                          } catch (e) {
-                            // Si hay un error, cerramos el loader
-                            if (context.mounted) Navigator.pop(context);
-
-                            // Y mostramos un mensaje al usuario
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Error al obtener datos: $e'),
-                                ),
-                              );
-                            }
-                          }
-                        },
-                        child: ProductCard(product: product),
-                      );
+                      // 🔥 AQUÍ ESTÁ LA MAGIA:
+                      // Hemos eliminado el InkWell, el Dialog de carga, el API Call,
+                      // y el Navigator.push. Ahora solo devolvemos la tarjeta limpia.
+                      return ProductCard(product: product);
                     },
                   ),
           ),

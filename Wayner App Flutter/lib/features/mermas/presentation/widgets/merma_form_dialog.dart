@@ -19,7 +19,7 @@ class MermaFormDialog extends StatefulWidget {
 class _MermaFormDialogState extends State<MermaFormDialog> {
   final _formKey = GlobalKey<FormState>();
   final _mermaService = MermaService();
-  final _saldosService = SaldosApiService(); // Instancia para buscar productos
+  final _saldosService = SaldosApiService();
 
   final _codigoController = TextEditingController();
   final _nombreController = TextEditingController();
@@ -38,6 +38,9 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
   bool _isSaving = false;
   bool _isSearching = false;
 
+  // 🔥 NUEVO: Variable de control para el Antirrebote (Debounce)
+  String _ultimaBusqueda = '';
+
   @override
   void initState() {
     super.initState();
@@ -48,14 +51,12 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
       _comentarioController.text = widget.merma!.comentario ?? '';
 
       _novedadSeleccionada = widget.merma!.novedad;
-      // Si la novedad guardada no está en la lista (registros viejos), la agregamos
       if (!_opcionesNovedad.contains(_novedadSeleccionada)) {
         _opcionesNovedad.add(_novedadSeleccionada!);
       }
     }
   }
 
-  // --- FUNCIÓN PARA ABRIR LA CÁMARA ---
   Future<void> _abrirEscaner(
     TextEditingController autocompleteController,
   ) async {
@@ -69,11 +70,9 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
       );
 
       if (code != null && code.isNotEmpty && mounted) {
-        // Llenar el campo visual y la variable de control
         autocompleteController.text = code;
         _codigoController.text = code;
 
-        // Buscar el producto en la BD para autocompletar el nombre
         setState(() => _isSearching = true);
         try {
           final producto = await _saldosService.getProductByCode(code);
@@ -107,7 +106,7 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
     if (!_formKey.currentState!.validate()) return;
     if (_codigoController.text.isEmpty) return;
 
-    FocusScope.of(context).unfocus(); // Ocultar teclado
+    FocusScope.of(context).unfocus();
     setState(() => _isSaving = true);
 
     if (widget.merma == null) {
@@ -118,7 +117,7 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
         novedad: _novedadSeleccionada!,
         comentario: _comentarioController.text,
         estado: 'Pendiente',
-        usuario: '', // Se llenará automáticamente en el backend vía Headers
+        usuario: '',
         activo: true,
       );
       await _mermaService.crearMerma(nuevaMerma);
@@ -148,18 +147,37 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // --- 1. AUTOCOMPLETADO Y ESCÁNER ---
                 Autocomplete<ProductBalance>(
                   optionsBuilder: (TextEditingValue textEditingValue) async {
-                    if (textEditingValue.text.length < 3) {
+                    final query = textEditingValue.text.trim();
+
+                    if (query.length < 3) {
                       return const Iterable<ProductBalance>.empty();
                     }
+
+                    // 🔥 LÓGICA DE DEBOUNCE
+                    _ultimaBusqueda = query;
+                    await Future.delayed(const Duration(milliseconds: 500));
+
+                    // Si el usuario siguió escribiendo, cancelamos esta petición
+                    if (_ultimaBusqueda != query) {
+                      return const Iterable<ProductBalance>.empty();
+                    }
+
                     try {
                       final results = await _saldosService.searchProducts(
-                        text: textEditingValue.text,
+                        text: query,
                         limit: 10,
                       );
-                      return results;
+
+                      // 🔥 LÓGICA DE DEDUPLICACIÓN
+                      // Usamos un Map donde la llave es el código para eliminar duplicados
+                      final Map<String, ProductBalance> unicos = {};
+                      for (var producto in results) {
+                        unicos[producto.codigo] = producto;
+                      }
+
+                      return unicos.values.toList();
                     } catch (e) {
                       return const Iterable<ProductBalance>.empty();
                     }
@@ -180,7 +198,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                           focusNode: focusNode,
                           decoration: InputDecoration(
                             labelText: 'Código / Últimos dígitos',
-                            // --- AQUÍ REGRESA EL BOTÓN DEL ESCÁNER ---
                             suffixIcon: IconButton(
                               icon: const Icon(Icons.qr_code_scanner),
                               tooltip: 'Escanear con cámara',
@@ -232,7 +249,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                 ),
                 const SizedBox(height: 12),
 
-                // --- 2. NOMBRE DEL PRODUCTO ---
                 TextFormField(
                   controller: _nombreController,
                   decoration: InputDecoration(
@@ -254,7 +270,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                 ),
                 const SizedBox(height: 12),
 
-                // --- 3. CANTIDAD ---
                 TextFormField(
                   controller: _cantidadController,
                   decoration: const InputDecoration(labelText: 'Cantidad'),
@@ -265,7 +280,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                 ),
                 const SizedBox(height: 12),
 
-                // --- 4. CONDICIÓN (MENÚ DESPLEGABLE) ---
                 DropdownButtonFormField<String>(
                   value: _novedadSeleccionada,
                   decoration: const InputDecoration(
@@ -288,7 +302,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                 ),
                 const SizedBox(height: 12),
 
-                // --- 5. COMENTARIO ---
                 TextFormField(
                   controller: _comentarioController,
                   decoration: const InputDecoration(

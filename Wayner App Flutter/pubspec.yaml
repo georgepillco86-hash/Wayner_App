@@ -54,6 +54,7 @@ dependencies:
   share_plus: ^13.2.1
   url_launcher: ^6.3.2
   web_socket_channel: ^3.0.0  # 🔥 NUEVA DEPENDENCIA AÑADIDA PARA EL RPA
+  flutter_barcode_scanner: ^2.0.0
 
 dev_dependencies:
   flutter_test:

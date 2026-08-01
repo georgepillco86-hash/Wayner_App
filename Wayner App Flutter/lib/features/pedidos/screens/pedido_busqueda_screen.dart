@@ -10,6 +10,10 @@ import '../../../core/storage/session_storage.dart';
 import '../../saldos/data/services/saldos_api_service.dart';
 import '../../cronograma/presentation/screens/cronograma_form_screen.dart';
 
+// 🔥 NUEVOS IMPORTS (Ajusta la ruta según dónde los guardaste)
+import '../../pedidos/widgets/selector_unidad_medida.dart';
+import '../../saldos/presentation/widgets/kardex_flotante_dialog.dart';
+
 class PedidoBusquedaScreen extends StatefulWidget {
   const PedidoBusquedaScreen({super.key});
 
@@ -83,10 +87,11 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
   Future<void> cargarUnidadesMedida() async {
     try {
       final unidades = await service.obtenerUnidadesMedida();
-      if (mounted)
+      if (mounted) {
         setState(
           () => unidadesMedida = unidades.isEmpty ? ['UNIDADES'] : unidades,
         );
+      }
     } catch (_) {
       if (mounted) setState(() => unidadesMedida = ['UNIDADES']);
     }
@@ -141,8 +146,24 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
         );
       }
 
+      // 🔥 LÓGICA DE DEDUPLICACIÓN (FILTRO ANTI-CLONES) 🔥
+      // Usamos un mapa donde la llave es el código del producto para asegurar que solo exista uno.
+      final Map<String, dynamic> productosUnicos = {};
+      for (var item in data) {
+        final codigo =
+            item["Codigo"]?.toString() ?? item["codigo"]?.toString() ?? "";
+
+        // Si el código no está vacío y aún no lo hemos agregado al mapa, lo guardamos.
+        if (codigo.isNotEmpty && !productosUnicos.containsKey(codigo)) {
+          productosUnicos[codigo] = item;
+        }
+      }
+
+      // Convertimos el mapa de vuelta a una lista limpia sin duplicados
+      final listaLimpia = productosUnicos.values.toList();
+
       if (!mounted) return;
-      setState(() => resultados = data);
+      setState(() => resultados = listaLimpia);
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -258,7 +279,6 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
         dynamic current = carrito[index].cantidad;
         double numValue = 0.0;
 
-        // Interpreta el valor actual (si es fracción, lo convierte a decimal temporalmente)
         if (current is num) {
           numValue = current.toDouble();
         } else if (current is String) {
@@ -279,11 +299,9 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
         if (numValue <= 0) {
           carrito.removeAt(index);
         } else {
-          // Si el resultado es exacto (.0), lo guarda sin decimales
           if (numValue == numValue.toInt()) {
             carrito[index].cantidad = numValue.toInt();
           } else {
-            // Se le dio un clic al +, se formatea a 2 decimales para evitar números largos
             carrito[index].cantidad = double.parse(numValue.toStringAsFixed(2));
           }
         }
@@ -294,7 +312,6 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
     PedidoDraftStorage.save(carrito);
   }
 
-  // 🔥 NUEVO: Ventana de entrada de datos (Texto libre) 🔥
   Future<void> _editarCantidadManual(
     dynamic item,
     PedidoItem? pedidoActual,
@@ -309,8 +326,7 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
         title: const Text("Ingresar Cantidad", style: TextStyle(fontSize: 16)),
         content: TextField(
           controller: controller,
-          keyboardType:
-              TextInputType.text, // Permite usar la barra espaciadora y el /
+          keyboardType: TextInputType.text,
           decoration: const InputDecoration(
             hintText: "Ej: 1, 1.5, 1/2",
             border: OutlineInputBorder(),
@@ -351,17 +367,6 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
       }
     });
     PedidoDraftStorage.save(carrito);
-  }
-
-  void _ciclarUnidad(dynamic item, String unidadActual, int delta) {
-    if (unidadesMedida.isEmpty) return;
-    int currentIndex = unidadesMedida.indexOf(unidadActual);
-    if (currentIndex == -1) currentIndex = 0;
-
-    int newIndex = currentIndex + delta;
-    if (newIndex >= 0 && newIndex < unidadesMedida.length) {
-      _cambiarUnidad(item, unidadesMedida[newIndex]);
-    }
   }
 
   void _cambiarDestino(dynamic item, String destino) {
@@ -607,8 +612,9 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                       value: busquedaProfunda,
                       onChanged: (val) {
                         setState(() => busquedaProfunda = val);
-                        if (searchController.text.length >= 2)
+                        if (searchController.text.length >= 2) {
                           buscar(searchController.text);
+                        }
                       },
                     ),
                   ],
@@ -778,7 +784,6 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                           ? carrito[indexCarrito]
                           : null;
 
-                      // 🔥 Ahora la variable recibe strings ("1/2") o números 🔥
                       final dynamic cantidadPedida =
                           pedidoActual?.cantidad ?? 0;
                       final bool estaEnCarrito =
@@ -892,7 +897,7 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                                 runSpacing: 6,
                                 crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
-                                  // 1. Selector de Cantidad [- N +] (El N es Clicable)
+                                  // 1. Selector de Cantidad [- N +]
                                   Container(
                                     height: 32,
                                     decoration: BoxDecoration(
@@ -930,7 +935,6 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                                               : null,
                                         ),
 
-                                        // 🔥 AQUÍ ESTÁ LA MAGIA DEL CLIC 🔥
                                         InkWell(
                                           onTap: () => _editarCantidadManual(
                                             item,
@@ -952,8 +956,8 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                                                 color: estaEnCarrito
                                                     ? Colors.blue.shade900
                                                     : Colors.grey,
-                                                decoration: TextDecoration
-                                                    .underline, // Indicio visual de que se puede editar
+                                                decoration:
+                                                    TextDecoration.underline,
                                                 decorationStyle:
                                                     TextDecorationStyle.dotted,
                                               ),
@@ -979,76 +983,14 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                                     ),
                                   ),
 
-                                  // 2. Stepper de Unidad (< UNIDADES >)
+                                  // 🔥 2. Selector de Unidad de Medida (Dropdown + Flechas)
                                   if (unidadesMedida.isNotEmpty)
-                                    Container(
-                                      height: 32,
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey.shade50,
-                                        borderRadius: BorderRadius.circular(16),
-                                        border: Border.all(
-                                          color: Colors.grey.shade300,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.chevron_left,
-                                              size: 18,
-                                              color: Colors.blueGrey,
-                                            ),
-                                            constraints: const BoxConstraints(
-                                              minWidth: 28,
-                                              minHeight: 32,
-                                            ),
-                                            padding: EdgeInsets.zero,
-                                            onPressed:
-                                                unidadesMedida.indexOf(
-                                                      unidadActual,
-                                                    ) >
-                                                    0
-                                                ? () => _ciclarUnidad(
-                                                    item,
-                                                    unidadActual,
-                                                    -1,
-                                                  )
-                                                : null,
-                                          ),
-                                          Text(
-                                            unidadActual,
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.blue.shade900,
-                                            ),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.chevron_right,
-                                              size: 18,
-                                              color: Colors.blueGrey,
-                                            ),
-                                            constraints: const BoxConstraints(
-                                              minWidth: 28,
-                                              minHeight: 32,
-                                            ),
-                                            padding: EdgeInsets.zero,
-                                            onPressed:
-                                                unidadesMedida.indexOf(
-                                                      unidadActual,
-                                                    ) <
-                                                    unidadesMedida.length - 1
-                                                ? () => _ciclarUnidad(
-                                                    item,
-                                                    unidadActual,
-                                                    1,
-                                                  )
-                                                : null,
-                                          ),
-                                        ],
-                                      ),
+                                    SelectorUnidadMedida(
+                                      unidadInicial: unidadActual,
+                                      unidadesDisponibles:
+                                          unidadesMedida, // 🔥 EL PARÁMETRO FALTANTE
+                                      onChanged: (nuevaUnidad) =>
+                                          _cambiarUnidad(item, nuevaUnidad),
                                     ),
 
                                   // 3. Destino (Venta / Gasto)
@@ -1104,6 +1046,35 @@ class _PedidoBusquedaScreenState extends State<PedidoBusquedaScreen> {
                                             ? Colors.blue.shade800
                                             : Colors.grey.shade600,
                                       ),
+                                    ),
+                                  ),
+
+                                  // 5. Botón del Kardex Flotante
+                                  Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade200,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: IconButton(
+                                      padding: EdgeInsets.zero,
+                                      icon: const Icon(
+                                        Icons.history_edu,
+                                        size: 18,
+                                        color: Colors.black87,
+                                      ),
+                                      tooltip: "Ver Kardex",
+                                      onPressed: () {
+                                        showDialog(
+                                          context: context,
+                                          builder: (context) =>
+                                              KardexFlotanteDialog(
+                                                codigoProducto: codigo,
+                                                nombreProducto: nombreCorregido,
+                                              ),
+                                        );
+                                      },
                                     ),
                                   ),
                                 ],

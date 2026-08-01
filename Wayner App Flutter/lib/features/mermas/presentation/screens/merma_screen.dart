@@ -57,7 +57,6 @@ class _MermaScreenState extends State<MermaScreen> {
     }
   }
 
-  // --- NUEVA LÓGICA DE FILTRADO ---
   List<Merma> get _filteredMermas {
     if (_searchQuery.isEmpty) return _mermas;
 
@@ -114,10 +113,12 @@ class _MermaScreenState extends State<MermaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final esPersonalAutorizado =
-        widget.rolUsuario == 'ADMIN' || widget.rolUsuario == 'BODEGUERO';
-    final listaFiltrada =
-        _filteredMermas; // Guardamos en variable local para la UI
+    // 🔥 CORRECCIÓN: Solo se puede auditar si eres personal autorizado Y estás en Modo Reporte.
+    final bool puedeAuditarChat =
+        (widget.rolUsuario == 'ADMIN' || widget.rolUsuario == 'BODEGUERO') &&
+        widget.esModoReporte;
+
+    final listaFiltrada = _filteredMermas;
 
     return Scaffold(
       appBar: AppBar(
@@ -130,7 +131,6 @@ class _MermaScreenState extends State<MermaScreen> {
       ),
       body: Column(
         children: [
-          // --- BARRA DE BÚSQUEDA ---
           Padding(
             padding: const EdgeInsets.all(12),
             child: TextField(
@@ -143,7 +143,7 @@ class _MermaScreenState extends State<MermaScreen> {
                     ? IconButton(
                         icon: const Icon(Icons.clear),
                         onPressed: () {
-                          FocusScope.of(context).unfocus(); // Cierra el teclado
+                          FocusScope.of(context).unfocus();
                           _searchController.clear();
                           setState(() => _searchQuery = '');
                         },
@@ -158,8 +158,6 @@ class _MermaScreenState extends State<MermaScreen> {
               },
             ),
           ),
-
-          // --- LISTA DE RESULTADOS ---
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -184,7 +182,8 @@ class _MermaScreenState extends State<MermaScreen> {
                                 ),
                                 clipBehavior: Clip.antiAlias,
                                 child: ListTile(
-                                  onTap: esPersonalAutorizado
+                                  // 🔥 CORRECCIÓN APLICADA AQUÍ: Solo abre el chat si cumple la nueva regla
+                                  onTap: puedeAuditarChat
                                       ? () => _mostrarOpcionesSeguimiento(merma)
                                       : null,
                                   title: Text(
@@ -250,7 +249,8 @@ class _MermaScreenState extends State<MermaScreen> {
                                                   if (ok) _cargarMermas();
                                                 },
                                               ),
-                                            if (esPersonalAutorizado)
+                                            // 🔥 CORRECCIÓN: La flecha solo se muestra si la tarjeta es "tocable"
+                                            if (puedeAuditarChat)
                                               const Icon(
                                                 Icons.chevron_right,
                                                 color: Colors.grey,

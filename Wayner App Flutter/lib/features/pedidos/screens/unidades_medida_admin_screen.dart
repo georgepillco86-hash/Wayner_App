@@ -10,8 +10,7 @@ class UnidadesMedidaAdminScreen extends StatefulWidget {
       _UnidadesMedidaAdminScreenState();
 }
 
-class _UnidadesMedidaAdminScreenState
-    extends State<UnidadesMedidaAdminScreen> {
+class _UnidadesMedidaAdminScreenState extends State<UnidadesMedidaAdminScreen> {
   final PedidosService service = PedidosService();
 
   bool isLoading = true;
@@ -184,9 +183,9 @@ class _UnidadesMedidaAdminScreenState
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unidad actualizada")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Unidad actualizada")));
 
       await cargarUnidades();
     } catch (e) {
@@ -231,9 +230,9 @@ class _UnidadesMedidaAdminScreenState
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unidad desactivada")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Unidad desactivada")));
 
       await cargarUnidades();
     } catch (e) {
@@ -242,6 +241,34 @@ class _UnidadesMedidaAdminScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("No se pudo desactivar la unidad")),
       );
+    }
+  }
+
+  // 🔥 FUNCIÓN CORREGIDA: Evita el rebote y guarda en la BD
+  void _onReorder(int oldIndex, int newIndex) async {
+    setState(() {
+      if (newIndex > oldIndex) {
+        newIndex -= 1;
+      }
+      final item = unidades.removeAt(oldIndex);
+      unidades.insert(newIndex, item);
+    });
+
+    // Extraemos los IDs en el nuevo orden
+    List<int> idsOrdenados = unidades.map((u) {
+      return int.tryParse(u["id"]?.toString() ?? '0') ?? 0;
+    }).toList();
+
+    try {
+      // Llamamos al servicio para guardar (Asegúrate de agregar este método en tu PedidosService)
+      await service.actualizarOrdenUnidades(idsOrdenados);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Error al guardar el nuevo orden")),
+      );
+      // Si falla, recargamos la lista para deshacer el cambio visual erróneo
+      cargarUnidades();
     }
   }
 
@@ -266,57 +293,70 @@ class _UnidadesMedidaAdminScreenState
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorMessage != null
-              ? Center(child: Text(errorMessage!))
-              : unidades.isEmpty
-                  ? const Center(child: Text("No hay unidades registradas"))
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: unidades.length,
-                      itemBuilder: (_, index) {
-                        final unidad = unidades[index];
-                        final activo = unidad["activo"] == true;
+          ? Center(child: Text(errorMessage!))
+          : unidades.isEmpty
+          ? const Center(child: Text("No hay unidades registradas"))
+          : ReorderableListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: unidades.length,
+              onReorder: _onReorder,
+              itemBuilder: (_, index) {
+                final unidad = unidades[index];
+                final activo = unidad["activo"] == true;
 
-                        return Card(
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              child: Text("${index + 1}"),
-                            ),
-                            title: Text(
-                              unidad["nombre"]?.toString() ?? "",
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            subtitle: Text(
-                              activo ? "Activo" : "Inactivo",
-                              style: TextStyle(
-                                color: activo ? Colors.green : Colors.red,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (value) {
-                                if (value == "editar") {
-                                  editarUnidad(unidad);
-                                } else if (value == "desactivar") {
-                                  desactivarUnidad(unidad);
-                                }
-                              },
-                              itemBuilder: (_) => const [
-                                PopupMenuItem(
-                                  value: "editar",
-                                  child: Text("Editar"),
-                                ),
-                                PopupMenuItem(
-                                  value: "desactivar",
-                                  child: Text("Desactivar"),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
+                // 🔥 CORRECCIÓN: Usamos el ID o el NOMBRE (que sabemos que es único) para evitar el rebote visual
+                final String keyString =
+                    unidad["id"]?.toString() ??
+                    unidad["nombre"]?.toString() ??
+                    index.toString();
+
+                return Card(
+                  key: ValueKey(
+                    keyString,
+                  ), // Esto le dice a Flutter exactamente qué tarjeta se movió
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  child: ListTile(
+                    leading: CircleAvatar(child: Text("${index + 1}")),
+                    title: Text(
+                      unidad["nombre"]?.toString() ?? "",
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
+                    subtitle: Text(
+                      activo ? "Activo" : "Inactivo",
+                      style: TextStyle(
+                        color: activo ? Colors.green : Colors.red,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        PopupMenuButton<String>(
+                          onSelected: (value) {
+                            if (value == "editar") {
+                              editarUnidad(unidad);
+                            } else if (value == "desactivar") {
+                              desactivarUnidad(unidad);
+                            }
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: "editar",
+                              child: Text("Editar"),
+                            ),
+                            PopupMenuItem(
+                              value: "desactivar",
+                              child: Text("Desactivar"),
+                            ),
+                          ],
+                        ),
+                        const Icon(Icons.drag_handle, color: Colors.grey),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }

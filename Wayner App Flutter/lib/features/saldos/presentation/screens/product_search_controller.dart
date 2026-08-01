@@ -24,13 +24,25 @@ class ProductSearchController extends ChangeNotifier {
   List<String> providers = [];
   List<ProductBalance> products = [];
 
-  // --- NUEVO: Lista maestra para filtrado local en memoria ---
+  // --- Lista maestra para filtrado local en memoria ---
   List<ProductBalance> _masterProductsList = [];
 
   String? _lastSearchText;
   String? _lastSearchClass;
   String? _lastSearchProvider;
   bool _initialDataLoaded = false;
+
+  // 🔥 NUEVA FUNCIÓN: Filtro Anti-Clones 🔥
+  // Elimina cualquier producto duplicado usando su código como identificador único
+  List<ProductBalance> _eliminarDuplicados(List<ProductBalance> listaBruta) {
+    final Map<String, ProductBalance> productosUnicos = {};
+    for (var item in listaBruta) {
+      if (item.codigo.isNotEmpty && !productosUnicos.containsKey(item.codigo)) {
+        productosUnicos[item.codigo] = item;
+      }
+    }
+    return productosUnicos.values.toList();
+  }
 
   Future<void> toggleDeepSearch(bool value) async {
     isDeepSearch = value;
@@ -59,15 +71,15 @@ class ProductSearchController extends ChangeNotifier {
         _service.getProviders(),
         isDeepSearch
             ? _service.getDataset(limit: 200)
-            // ---> CORREGIDO: Usamos searchProducts en vez de buscarRapido <---
             : _service.searchProducts(text: ''),
       ]);
 
       classes = results[0] as List<String>;
       providers = results[1] as List<String>;
 
-      // ---> CORREGIDO: searchProducts ya devuelve List<ProductBalance> parseado <---
-      products = results[2] as List<ProductBalance>;
+      // 🔥 Pasamos los resultados por el filtro anti-clones
+      final rawProducts = results[2] as List<ProductBalance>;
+      products = _eliminarDuplicados(rawProducts);
 
       _masterProductsList = List.from(products);
       _initialDataLoaded = true;
@@ -118,15 +130,18 @@ class ProductSearchController extends ChangeNotifier {
     try {
       if (isDeepSearch) {
         final results = await _service.busquedaProfundaKardex(cleanText);
-        products = results
+        final rawProducts = results
             .map((json) => ProductBalance.fromJson(json))
             .toList();
+        // 🔥 Aplicamos el filtro
+        products = _eliminarDuplicados(rawProducts);
       } else {
-        // ---> CORREGIDO: Usamos el método unificado que ya mapea a objetos <---
-        products = await _service.searchProducts(
+        final rawProducts = await _service.searchProducts(
           text: cleanText,
           proveedor: selectedProvider,
         );
+        // 🔥 Aplicamos el filtro
+        products = _eliminarDuplicados(rawProducts);
       }
 
       _lastSearchText = cleanText;
@@ -148,19 +163,21 @@ class ProductSearchController extends ChangeNotifier {
 
     _setLoading(true);
     try {
+      List<ProductBalance> rawProducts;
       if (isDeepSearch) {
-        products = await _service.getDataset(
+        rawProducts = await _service.getDataset(
           limit: 200,
           proveedor: selectedProvider,
         );
       } else {
-        // ---> CORREGIDO <---
-        products = await _service.searchProducts(
+        rawProducts = await _service.searchProducts(
           text: '',
           proveedor: selectedProvider,
         );
       }
 
+      // 🔥 Aplicamos el filtro
+      products = _eliminarDuplicados(rawProducts);
       _masterProductsList = List.from(products);
 
       if (!keepFilters) {
@@ -188,21 +205,23 @@ class ProductSearchController extends ChangeNotifier {
 
     _setLoading(true);
     try {
+      List<ProductBalance> rawProducts;
       if (isDeepSearch) {
-        products = await _service.getProductsByClass(
+        rawProducts = await _service.getProductsByClass(
           clase,
           limit: 5000,
           proveedor: selectedProvider,
         );
       } else {
-        // ---> CORREGIDO <---
-        products = await _service.searchProducts(
+        rawProducts = await _service.searchProducts(
           text: '',
           proveedor: selectedProvider,
           clase: clase,
         );
       }
 
+      // 🔥 Aplicamos el filtro
+      products = _eliminarDuplicados(rawProducts);
       _masterProductsList = List.from(products);
 
       if (_lastSearchText != null && _lastSearchText!.isNotEmpty) {
@@ -229,16 +248,21 @@ class ProductSearchController extends ChangeNotifier {
 
     _setLoading(true);
     try {
+      List<ProductBalance> rawProducts;
       if (isDeepSearch) {
-        products = await _service.getDataset(limit: 5000, proveedor: proveedor);
+        rawProducts = await _service.getDataset(
+          limit: 5000,
+          proveedor: proveedor,
+        );
       } else {
-        // ---> CORREGIDO <---
-        products = await _service.searchProducts(
+        rawProducts = await _service.searchProducts(
           text: '',
           proveedor: proveedor,
         );
       }
 
+      // 🔥 Aplicamos el filtro
+      products = _eliminarDuplicados(rawProducts);
       _masterProductsList = List.from(products);
 
       if (_lastSearchText != null && _lastSearchText!.isNotEmpty) {

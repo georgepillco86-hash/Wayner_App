@@ -564,6 +564,19 @@ class PedidosService {
     throw Exception("Error al desactivar unidad de medida");
   }
 
+  // 🔥 NUEVO MÉTODO AÑADIDO: Guarda el nuevo orden de las unidades
+  Future<void> actualizarOrdenUnidades(List<int> idsOrdenados) async {
+    final response = await http.post(
+      Uri.parse("${ApiConfig.baseUrl}/api/unidades-medida/orden"),
+      headers: await AuthHeaders.json(), // Usamos AuthHeaders para seguridad
+      body: jsonEncode({"orden_ids": idsOrdenados}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception("Error al actualizar el orden de las unidades de medida");
+    }
+  }
+
   Future<Map<String, dynamic>> obtenerCantidadRecomendadaProducto(
     String codigoProducto,
   ) async {
