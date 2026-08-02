@@ -6,9 +6,12 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../services/pedidos_service.dart';
-// ⚠️ RECUERDA: Deja que el editor importe la librería de SaldosApiService en la línea 27.
+
+// ⚠️ ASEGÚRATE DE IMPORTAR TU KARDEX AQUÍ
+// import '../widgets/kardex_flotante_dialog.dart';
 
 class GenerarPedidoProveedorDialog extends StatefulWidget {
   final int pedidoId;
@@ -23,8 +26,6 @@ class GenerarPedidoProveedorDialog extends StatefulWidget {
 class _GenerarPedidoProveedorDialogState
     extends State<GenerarPedidoProveedorDialog> {
   final PedidosService service = PedidosService();
-
-  // ⚠️ PON EL CURSOR SOBRE SaldosApiService Y PRESIONA CTRL + . PARA IMPORTAR:
   late final SaldosApiService saldosService;
 
   bool isLoading = true;
@@ -33,14 +34,19 @@ class _GenerarPedidoProveedorDialogState
   Map<String, dynamic>? textosGenerados;
 
   String filtroSeleccionado = "TODOS";
-  Map<String, Map<String, dynamic>?> costosCache = {};
+
+  Map<String, Map<String, dynamic>?> costosGlobalesCache = {};
+  Map<String, List<dynamic>> historialCache = {};
   Map<String, Map<String, dynamic>> stockYMinimoCache = {};
+  List<String> unidadesGlobales = ["UNIDAD/ES"];
 
   Set<String> proveedoresEnviados = {};
   SharedPreferences? _prefs;
 
   final Map<String, TextEditingController> _descProvControllers = {};
   final Map<String, TextEditingController> _descItemControllers = {};
+  final Map<String, TextEditingController> _cantControllers = {};
+  final Map<String, TextEditingController> _costoControllers = {};
 
   @override
   void initState() {
@@ -57,6 +63,12 @@ class _GenerarPedidoProveedorDialogState
     for (var c in _descItemControllers.values) {
       c.dispose();
     }
+    for (var c in _cantControllers.values) {
+      c.dispose();
+    }
+    for (var c in _costoControllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -67,12 +79,31 @@ class _GenerarPedidoProveedorDialogState
     return _descProvControllers[prov]!;
   }
 
-  // 🔥 CORRECCIÓN: Ahora recibe una clave única generada por código + índice
   TextEditingController _getDescItemController(String uniqueKey) {
     if (!_descItemControllers.containsKey(uniqueKey)) {
       _descItemControllers[uniqueKey] = TextEditingController(text: "0");
     }
     return _descItemControllers[uniqueKey]!;
+  }
+
+  TextEditingController _getCantController(
+    String uniqueKey,
+    String valorInicial,
+  ) {
+    if (!_cantControllers.containsKey(uniqueKey)) {
+      _cantControllers[uniqueKey] = TextEditingController(text: valorInicial);
+    }
+    return _cantControllers[uniqueKey]!;
+  }
+
+  TextEditingController _getCostoController(
+    String uniqueKey,
+    String valorInicial,
+  ) {
+    if (!_costoControllers.containsKey(uniqueKey)) {
+      _costoControllers[uniqueKey] = TextEditingController(text: valorInicial);
+    }
+    return _costoControllers[uniqueKey]!;
   }
 
   double _getDescuentoProv(String prov) {
@@ -81,6 +112,23 @@ class _GenerarPedidoProveedorDialogState
 
   double _getDescuentoItem(String uniqueKey) {
     return double.tryParse(_descItemControllers[uniqueKey]?.text ?? "0") ?? 0.0;
+  }
+
+  double _obtenerCostoActualParaCalculos(
+    String uniqueKey,
+    String codigo,
+    String proveedor,
+    double costoBaseFallback,
+  ) {
+    if (_costoControllers.containsKey(uniqueKey)) {
+      return double.tryParse(_costoControllers[uniqueKey]!.text) ??
+          costoBaseFallback;
+    }
+    return _obtenerUltimoCostoParaProveedor(
+      codigo,
+      proveedor,
+      costoBaseFallback,
+    );
   }
 
   String _formatearSecuencial(int id) {
@@ -106,86 +154,134 @@ class _GenerarPedidoProveedorDialogState
           _prefs?.getStringList('pedido_${widget.pedidoId}_sent') ?? [];
       proveedoresEnviados = guardados.toSet();
 
+      try {
+        final uni = await service.obtenerUnidadesMedida();
+        if (uni.isNotEmpty) unidadesGlobales = uni;
+      } catch (e) {
+        debugPrint("Error cargando unidades: $e");
+      }
+
       final dataPedido = await service.obtenerDetallePedidoAdmin(
         widget.pedidoId,
       );
       final dataTextos = await service.obtenerTextosProveedor(widget.pedidoId);
 
-      setState(() {
-        pedido = dataPedido;
-        textosGenerados = dataTextos;
-      });
+      pedido = dataPedido;
+      textosGenerados = dataTextos;
 
-      _cargarCostosGlobales();
-      _cargarStockYMinimoEnVivo();
+      await Future.wait([
+        _cargarCostosGlobales(),
+        _cargarHistorialCostos(),
+        _cargarStockYMinimoEnVivo(),
+      ]);
     } catch (e) {
-      setState(() {
-        errorMessage = "Error al cargar la información del pedido.";
-      });
+      errorMessage = "Error al cargar la información del pedido.";
     } finally {
-      setState(() {
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
     }
   }
 
   Future<void> _cargarStockYMinimoEnVivo() async {
     final items = pedido?["items"] as List<dynamic>? ?? [];
+    List<Future> peticiones = [];
+
     for (var item in items) {
       final codigo = item["codigo_producto"]?.toString();
-
       if (codigo != null &&
           codigo.isNotEmpty &&
           !stockYMinimoCache.containsKey(codigo)) {
-        try {
-          final resultados = await saldosService.buscarRapido(termino: codigo);
-
-          if (resultados.isNotEmpty) {
-            final dataInfo = resultados.first;
-            if (mounted) {
-              setState(() {
-                stockYMinimoCache[codigo] = {
-                  "stock":
-                      dataInfo["Stock"] ??
-                      dataInfo["stock"] ??
-                      dataInfo["stock_actual"] ??
-                      0,
-                  "minimo":
-                      dataInfo["Minimo"] ??
-                      dataInfo["minimo"] ??
-                      dataInfo["stock_minimo"] ??
-                      0,
-                };
-              });
-            }
-          }
-        } catch (e) {
-          debugPrint("Error obteniendo stock en vivo: $e");
-        }
+        peticiones.add(
+          saldosService
+              .buscarRapido(termino: codigo)
+              .then((resultados) {
+                if (resultados.isNotEmpty) {
+                  final dataInfo = resultados.first;
+                  stockYMinimoCache[codigo] = {
+                    "stock":
+                        dataInfo["Stock"] ??
+                        dataInfo["stock"] ??
+                        dataInfo["stock_actual"] ??
+                        0,
+                    "minimo":
+                        dataInfo["Minimo"] ??
+                        dataInfo["minimo"] ??
+                        dataInfo["stock_minimo"] ??
+                        0,
+                  };
+                }
+              })
+              .catchError((_) {}),
+        );
       }
     }
+    await Future.wait(peticiones);
   }
 
   Future<void> _cargarCostosGlobales() async {
     final items = pedido?["items"] as List<dynamic>? ?? [];
+    List<Future> peticiones = [];
+
     for (var item in items) {
       final codigo = item["codigo_producto"]?.toString();
       if (codigo != null &&
           codigo.isNotEmpty &&
-          !costosCache.containsKey(codigo)) {
-        try {
-          final costoData = await service.obtenerMejorCostoGlobal(
-            codigo,
-            meses: 3,
-          );
-          if (mounted) {
-            setState(() {
-              costosCache[codigo] = costoData;
-            });
-          }
-        } catch (_) {}
+          !costosGlobalesCache.containsKey(codigo)) {
+        peticiones.add(
+          service
+              .obtenerMejorCostoGlobal(codigo, meses: 3)
+              .then((costoData) {
+                costosGlobalesCache[codigo] = costoData;
+              })
+              .catchError((_) {}),
+        );
       }
     }
+    await Future.wait(peticiones);
+  }
+
+  Future<void> _cargarHistorialCostos() async {
+    final items = pedido?["items"] as List<dynamic>? ?? [];
+    List<Future> peticiones = [];
+
+    for (var item in items) {
+      final codigo = item["codigo_producto"]?.toString();
+      if (codigo != null &&
+          codigo.isNotEmpty &&
+          !historialCache.containsKey(codigo)) {
+        peticiones.add(
+          service
+              .obtenerHistorialCostos(codigo, 20)
+              .then((historial) {
+                historialCache[codigo] = historial;
+              })
+              .catchError((_) {}),
+        );
+      }
+    }
+    await Future.wait(peticiones);
+  }
+
+  double _obtenerUltimoCostoParaProveedor(
+    String codigo,
+    String proveedor,
+    double costoBaseFallback,
+  ) {
+    final historial = historialCache[codigo];
+    if (historial == null || historial.isEmpty) return costoBaseFallback;
+
+    for (var h in historial) {
+      final provHistorial =
+          h["proveedor"]?.toString().trim().toUpperCase() ?? "";
+      if (provHistorial == proveedor.trim().toUpperCase()) {
+        return double.tryParse(h["costo_final"]?.toString() ?? "0") ??
+            costoBaseFallback;
+      }
+    }
+    return costoBaseFallback;
   }
 
   String _formatearFechaCorta(DateTime date) {
@@ -210,9 +306,7 @@ class _GenerarPedidoProveedorDialogState
             ),
           );
         }
-      } catch (e) {
-        debugPrint("Error al auto-actualizar estado: $e");
-      }
+      } catch (e) {}
     }
   }
 
@@ -407,15 +501,97 @@ class _GenerarPedidoProveedorDialogState
     }
   }
 
-  Future<void> _actualizarCantidad(Map<String, dynamic> item, int delta) async {
+  Future<void> _guardarCantidadEscrita(
+    Map<String, dynamic> item,
+    String uniqueKey,
+    String valorTipeado,
+  ) async {
+    double nuevaCant = double.tryParse(valorTipeado) ?? 1.0;
+    if (nuevaCant <= 0) nuevaCant = 1.0;
+
+    final itemsPedidoOriginal = pedido?["items"] as List<dynamic>? ?? [];
+    final itemReal = itemsPedidoOriginal.firstWhere(
+      (i) =>
+          i["codigo_producto"]?.toString() ==
+          item["codigo_producto"]?.toString(),
+      orElse: () => {},
+    );
+    final itemId = itemReal["id"];
+
+    if (itemId != null) {
+      try {
+        await service.actualizarCantidadItemPedido(
+          pedidoId: widget.pedidoId,
+          itemId: itemId,
+          cantidad: nuevaCant,
+        );
+        setState(() {
+          item["cantidad_pedida"] = nuevaCant;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Cantidad actualizada",
+              style: TextStyle(fontSize: 12),
+            ),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error al guardar cantidad: $e")),
+        );
+      }
+    }
+  }
+
+  Future<void> _modificarCantidadBoton(
+    Map<String, dynamic> item,
+    String uniqueKey,
+    double delta,
+  ) async {
     double cantActual =
-        double.tryParse(item["cantidad_pedida"].toString()) ?? 0;
+        double.tryParse(_getCantController(uniqueKey, "").text) ?? 1.0;
     double nuevaCant = cantActual + delta;
     if (nuevaCant <= 0) return;
 
-    setState(() {
-      item["cantidad_pedida"] = nuevaCant;
-    });
+    _getCantController(uniqueKey, "").text = nuevaCant.toStringAsFixed(
+      nuevaCant.truncateToDouble() == nuevaCant ? 0 : 2,
+    );
+    await _guardarCantidadEscrita(
+      item,
+      uniqueKey,
+      _getCantController(uniqueKey, "").text,
+    );
+  }
+
+  Future<void> _cambiarUnidadMedidaItem(
+    Map<String, dynamic> item,
+    String nuevaUnidad,
+  ) async {
+    final itemsPedidoOriginal = pedido?["items"] as List<dynamic>? ?? [];
+    final itemReal = itemsPedidoOriginal.firstWhere(
+      (i) =>
+          i["codigo_producto"]?.toString() ==
+          item["codigo_producto"]?.toString(),
+      orElse: () => {},
+    );
+    final itemId = itemReal["id"];
+
+    if (itemId != null) {
+      try {
+        await service.actualizarUnidadItemPedido(
+          pedidoId: widget.pedidoId,
+          itemId: itemId,
+          unidad: nuevaUnidad,
+        );
+        setState(() => item["unidad"] = nuevaUnidad);
+      } catch (e) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error al cambiar unidad: $e")));
+      }
+    }
   }
 
   Future<void> _eliminarProducto(Map<String, dynamic> item) async {
@@ -467,7 +643,6 @@ class _GenerarPedidoProveedorDialogState
     }
   }
 
-  // 🔥 NUEVA FUNCIÓN: Agregar Promoción Automática 🔥
   Future<void> _agregarPromocion(Map<String, dynamic> item) async {
     final TextEditingController cantPromoController = TextEditingController(
       text: "1",
@@ -538,7 +713,7 @@ class _GenerarPedidoProveedorDialogState
           codigoProducto: codigoProd,
           cantidad: cantPromo,
           unidad: unidadStr,
-          notaCompra: "PROMO", // Ayuda a identificarlo en el backend
+          notaCompra: "PROMO",
         );
 
         if (mounted) {
@@ -588,17 +763,10 @@ class _GenerarPedidoProveedorDialogState
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
 
-    List<String> opcionesUnidad = ["UNIDAD/ES"];
-    try {
-      final unidadesBd = await service.obtenerUnidadesMedida();
-      if (unidadesBd.isNotEmpty) opcionesUnidad = unidadesBd;
-    } catch (e) {
-      debugPrint("Error cargando unidades: $e");
-    }
-
+    if (unidadesGlobales.isEmpty) unidadesGlobales = ["UNIDAD/ES"];
     if (mounted) Navigator.pop(context);
 
-    String unidadSeleccionada = opcionesUnidad.first;
+    String unidadSeleccionada = unidadesGlobales.first;
 
     final bool? confirmar = await showDialog<bool>(
       context: context,
@@ -630,7 +798,9 @@ class _GenerarPedidoProveedorDialogState
 
                   TextField(
                     controller: cantController,
-                    keyboardType: TextInputType.number,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
                       labelText: "Cantidad a pedir",
                       border: OutlineInputBorder(),
@@ -640,16 +810,16 @@ class _GenerarPedidoProveedorDialogState
                   const SizedBox(height: 16),
 
                   DropdownButtonFormField<String>(
-                    value: opcionesUnidad.contains(unidadSeleccionada)
+                    value: unidadesGlobales.contains(unidadSeleccionada)
                         ? unidadSeleccionada
-                        : opcionesUnidad.first,
+                        : unidadesGlobales.first,
                     decoration: const InputDecoration(
                       labelText: "Unidad de medida",
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.square_foot),
                     ),
                     isExpanded: true,
-                    items: opcionesUnidad.map((u) {
+                    items: unidadesGlobales.map((u) {
                       return DropdownMenuItem(
                         value: u,
                         child: Text(
@@ -738,8 +908,9 @@ class _GenerarPedidoProveedorDialogState
     }).toList();
   }
 
+  // 🔥 LÓGICA MATEMÁTICA CORREGIDA PARA WHATSAPP
   String _construirTextoComoPDF(String proveedor, List<dynamic> items) {
-    double subtotal15 = 0.0;
+    double totalConIvaAcumulado = 0.0;
     double subtotal0 = 0.0;
     double totalDescuentos = 0.0;
     Set<String> codigosVistos = {};
@@ -761,13 +932,111 @@ class _GenerarPedidoProveedorDialogState
     for (int i = 0; i < items.length; i++) {
       final item = items[i];
       final cant = double.tryParse(item["cantidad_pedida"].toString()) ?? 0;
-      final costoUnit =
-          double.tryParse(item["costo_base"]?.toString() ?? "0") ?? 0.0;
       final tieneIva = item["tiene_iva"] == true;
       final codigo = item["codigo_producto"]?.toString() ?? "";
 
-      // 🔥 Leemos el descuento usando la clave única del índice
-      final uniqueKey = "${codigo}_$i";
+      final costoBaseData =
+          double.tryParse(item["costo_base"]?.toString() ?? "0") ?? 0.0;
+      final uniqueKey = "${proveedor}_${codigo}_$i";
+
+      final costoUnit = _obtenerCostoActualParaCalculos(
+        uniqueKey,
+        codigo,
+        proveedor,
+        costoBaseData,
+      );
+      final descItem = _getDescuentoItem(uniqueKey);
+
+      double descPorcentajeTotal = descGlobalProv + descItem;
+      if (descPorcentajeTotal > 100) descPorcentajeTotal = 100;
+
+      bool esPromo = false;
+      if (codigosVistos.contains(codigo)) {
+        esPromo = true;
+      } else {
+        codigosVistos.add(codigo);
+      }
+
+      double descUnitario = esPromo
+          ? costoUnit
+          : (costoUnit * (descPorcentajeTotal / 100));
+      double costoFinalUnit = costoUnit - descUnitario;
+      double subtotalItem = costoFinalUnit * cant;
+
+      totalDescuentos += (descUnitario * cant);
+
+      // Si el producto tiene IVA, sumamos su total (que YA TIENE IVA) al acumulador
+      if (tieneIva) {
+        totalConIvaAcumulado += subtotalItem;
+      } else {
+        subtotal0 += subtotalItem;
+      }
+
+      final unidadTxt = item["unidad"] ?? "UNIDAD/ES";
+
+      txt += "▪️ ${item["nombre_producto"]} ${esPromo ? '🎁 (PROMO)' : ''}\n";
+      txt += "   Código: $codigo | Cant: $cant $unidadTxt\n";
+      txt +=
+          "   Costo U: \$${costoUnit.toStringAsFixed(4)} | Dscto/U: \$${descUnitario.toStringAsFixed(4)}\n";
+      txt += "   Total: \$${subtotalItem.toStringAsFixed(2)}\n\n";
+    }
+
+    // 🔥 DESENGLOSAMOS EL IVA (Asumiendo 15%)
+    // Dividimos para 1.15 para sacar la base real sin impuestos
+    final base15 = totalConIvaAcumulado / 1.15;
+    // La diferencia entre el total con IVA y la base es el valor exacto del impuesto
+    final totalIva = totalConIvaAcumulado - base15;
+
+    // El total a pagar es la suma de los productos 0% y los del 15% (que ya incluyen su propio IVA en la variable)
+    final totalNeto = totalConIvaAcumulado + subtotal0;
+
+    txt += "----------------------------------------\n";
+    if (descGlobalProv > 0)
+      txt += "Descuento del Proveedor Aplicado: $descGlobalProv%\n";
+    txt += "Subtotal 15% (Base sin IVA): \$${base15.toStringAsFixed(2)}\n";
+    txt += "Subtotal 0% (Base sin IVA): \$${subtotal0.toStringAsFixed(2)}\n";
+    txt += "Total Ahorro/Dsctos: \$${totalDescuentos.toStringAsFixed(2)}\n";
+    txt += "Valor Total de IVA (15%): \$${totalIva.toStringAsFixed(2)}\n";
+    txt += "💰 *TOTAL NETO A PAGAR: \$${totalNeto.toStringAsFixed(2)}*\n";
+
+    return txt;
+  }
+
+  // 🔥 LÓGICA MATEMÁTICA CORREGIDA PARA PDF
+  Future<void> _compartirUnificado(
+    String proveedor,
+    List<dynamic> items,
+    String textoPlano,
+    int totalProveedores,
+  ) async {
+    final pdf = pw.Document();
+
+    double totalConIvaAcumulado = 0.0;
+    double subtotal0 = 0.0;
+    double totalDescuentos = 0.0;
+    Set<String> codigosVistos = {};
+
+    final idSecuencial = _formatearSecuencial(widget.pedidoId);
+    final descGlobalProv = _getDescuentoProv(proveedor);
+
+    final tableData = items.asMap().entries.map((entry) {
+      final i = entry.key;
+      final item = entry.value;
+
+      final cant = double.tryParse(item["cantidad_pedida"].toString()) ?? 0;
+      final tieneIva = item["tiene_iva"] == true;
+      final codigo = item["codigo_producto"]?.toString() ?? "";
+
+      final costoBaseData =
+          double.tryParse(item["costo_base"]?.toString() ?? "0") ?? 0.0;
+      final uniqueKey = "${proveedor}_${codigo}_$i";
+
+      final costoUnit = _obtenerCostoActualParaCalculos(
+        uniqueKey,
+        codigo,
+        proveedor,
+        costoBaseData,
+      );
       final descItem = _getDescuentoItem(uniqueKey);
 
       double descPorcentajeTotal = descGlobalProv + descItem;
@@ -789,86 +1058,10 @@ class _GenerarPedidoProveedorDialogState
       totalDescuentos += (descUnitario * cant);
 
       if (tieneIva) {
-        subtotal15 += subtotalItem;
+        totalConIvaAcumulado += subtotalItem;
       } else {
         subtotal0 += subtotalItem;
       }
-
-      final unidadTxt = item["unidad"] ?? "UNIDAD/ES";
-
-      txt += "▪️ ${item["nombre_producto"]} ${esPromo ? '🎁 (PROMO)' : ''}\n";
-      txt += "   Código: $codigo | Cant: $cant $unidadTxt\n";
-      txt +=
-          "   Costo U: \$${costoUnit.toStringAsFixed(4)} | Dscto/U: \$${descUnitario.toStringAsFixed(4)}\n";
-      txt += "   Total: \$${subtotalItem.toStringAsFixed(2)}\n\n";
-    }
-
-    final totalIva = subtotal15 * 0.15;
-    final totalNeto = subtotal15 + subtotal0 + totalIva;
-
-    txt += "----------------------------------------\n";
-    if (descGlobalProv > 0)
-      txt += "Descuento del Proveedor Aplicado: $descGlobalProv%\n";
-    txt += "Subtotal 15% (con IVA): \$${subtotal15.toStringAsFixed(2)}\n";
-    txt += "Subtotal 0% (sin IVA): \$${subtotal0.toStringAsFixed(2)}\n";
-    txt += "Total Ahorro/Dsctos: \$${totalDescuentos.toStringAsFixed(2)}\n";
-    txt += "Valor Total de IVA: \$${totalIva.toStringAsFixed(2)}\n";
-    txt += "💰 *TOTAL NETO A PAGAR: \$${totalNeto.toStringAsFixed(2)}*\n";
-
-    return txt;
-  }
-
-  Future<void> _compartirUnificado(
-    String proveedor,
-    List<dynamic> items,
-    String textoPlano,
-    int totalProveedores,
-  ) async {
-    final pdf = pw.Document();
-
-    double subtotal15 = 0.0;
-    double subtotal0 = 0.0;
-    double totalDescuentos = 0.0;
-    Set<String> codigosVistos = {};
-
-    final idSecuencial = _formatearSecuencial(widget.pedidoId);
-    final descGlobalProv = _getDescuentoProv(proveedor);
-
-    final tableData = items.asMap().entries.map((entry) {
-      final i = entry.key;
-      final item = entry.value;
-
-      final cant = double.tryParse(item["cantidad_pedida"].toString()) ?? 0;
-      final costoUnit =
-          double.tryParse(item["costo_base"]?.toString() ?? "0") ?? 0.0;
-      final tieneIva = item["tiene_iva"] == true;
-      final codigo = item["codigo_producto"]?.toString() ?? "";
-
-      final uniqueKey = "${codigo}_$i";
-      final descItem = _getDescuentoItem(uniqueKey);
-
-      double descPorcentajeTotal = descGlobalProv + descItem;
-      if (descPorcentajeTotal > 100) descPorcentajeTotal = 100;
-
-      bool esPromo = false;
-      if (codigosVistos.contains(codigo)) {
-        esPromo = true;
-      } else {
-        codigosVistos.add(codigo);
-      }
-
-      double descUnitario = esPromo
-          ? costoUnit
-          : (costoUnit * (descPorcentajeTotal / 100));
-      double costoFinalUnit = costoUnit - descUnitario;
-      double subtotalItem = costoFinalUnit * cant;
-
-      totalDescuentos += (descUnitario * cant);
-
-      if (tieneIva)
-        subtotal15 += subtotalItem;
-      else
-        subtotal0 += subtotalItem;
 
       return [
         codigo,
@@ -881,8 +1074,10 @@ class _GenerarPedidoProveedorDialogState
       ];
     }).toList();
 
-    final totalIva = subtotal15 * 0.15;
-    final totalNeto = subtotal15 + subtotal0 + totalIva;
+    // 🔥 DESENGLOSE PARA EL PDF
+    final base15 = totalConIvaAcumulado / 1.15;
+    final totalIva = totalConIvaAcumulado - base15;
+    final totalNeto = totalConIvaAcumulado + subtotal0;
 
     pdf.addPage(
       pw.MultiPage(
@@ -964,16 +1159,16 @@ class _GenerarPedidoProveedorDialogState
                       "Descuento del Proveedor Aplicado: $descGlobalProv%",
                     ),
                   pw.Text(
-                    "Subtotal 15% (con IVA): \$${subtotal15.toStringAsFixed(2)}",
+                    "Subtotal 15% (Base sin IVA): \$${base15.toStringAsFixed(2)}",
                   ),
                   pw.Text(
-                    "Subtotal 0% (sin IVA): \$${subtotal0.toStringAsFixed(2)}",
+                    "Subtotal 0% (Base sin IVA): \$${subtotal0.toStringAsFixed(2)}",
                   ),
                   pw.Text(
                     "Total Ahorro/Dsctos: \$${totalDescuentos.toStringAsFixed(2)}",
                   ),
                   pw.Text(
-                    "Valor Total de Impuestos (IVA): \$${totalIva.toStringAsFixed(2)}",
+                    "Valor Total de Impuestos (IVA 15%): \$${totalIva.toStringAsFixed(2)}",
                   ),
                   pw.Container(width: 180, child: pw.Divider()),
                   pw.Text(
@@ -1043,7 +1238,19 @@ class _GenerarPedidoProveedorDialogState
         height: MediaQuery.of(context).size.height * 0.95,
         padding: const EdgeInsets.all(16),
         child: isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text(
+                      "Cargando historiales de costos...",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ],
+                ),
+              )
             : errorMessage != null
             ? Center(child: Text(errorMessage!))
             : Column(
@@ -1326,15 +1533,12 @@ class _GenerarPedidoProveedorDialogState
                 ),
                 const SizedBox(height: 8),
 
-                // 🔥 Convertimos la lista de items usando su índice para el UniqueKey
                 ...items.asMap().entries.map((entry) {
                   final int idx = entry.key;
                   final item = entry.value;
 
                   final codigo = item["codigo_producto"]?.toString() ?? "";
-                  final uniqueKey =
-                      "${codigo}_$idx"; // 🔥 CLAVE ÚNICA PARA DESCUENTO
-                  final costoData = costosCache[codigo];
+                  final uniqueKey = "${prov}_${codigo}_$idx";
 
                   final stock =
                       stockYMinimoCache[codigo]?['stock'] ??
@@ -1344,20 +1548,41 @@ class _GenerarPedidoProveedorDialogState
                       stockYMinimoCache[codigo]?['minimo'] ??
                       item["minimo"] ??
                       "0";
+                  final cantController = _getCantController(
+                    uniqueKey,
+                    item["cantidad_pedida"]?.toString() ?? "1",
+                  );
 
-                  String textoCosto = "Costo ref: \$${item["costo_base"]}";
-                  String provMasBarato = "";
+                  final costoGlobalData = costosGlobalesCache[codigo];
+                  String txtMejorCosto = "Mejor costo (3m): Sin registro";
+                  String txtMejorProv = "";
 
-                  if (costosCache.containsKey(codigo) && costoData != null) {
-                    final costoFinal =
+                  if (costoGlobalData != null) {
+                    final cGlobal =
                         double.tryParse(
-                          costoData["costo_final"]?.toString() ?? "0",
+                          costoGlobalData["costo_final"]?.toString() ?? "0",
                         ) ??
                         0.0;
-                    textoCosto =
-                        "Último costo: \$${costoFinal.toStringAsFixed(3)}";
-                    provMasBarato = costoData["proveedor"] ?? "Desconocido";
+                    if (cGlobal > 0) {
+                      txtMejorCosto =
+                          "Mejor costo (3m): \$${cGlobal.toStringAsFixed(4)}";
+                      txtMejorProv =
+                          "Prov: ${costoGlobalData["proveedor"] ?? 'Desconocido'}";
+                    }
                   }
+
+                  final costoBase =
+                      double.tryParse(item["costo_base"]?.toString() ?? "0") ??
+                      0.0;
+                  final ultimoCostoProv = _obtenerUltimoCostoParaProveedor(
+                    codigo,
+                    prov,
+                    costoBase,
+                  );
+                  final costoController = _getCostoController(
+                    uniqueKey,
+                    ultimoCostoProv.toStringAsFixed(4),
+                  );
 
                   return Container(
                     margin: const EdgeInsets.only(bottom: 8),
@@ -1382,7 +1607,19 @@ class _GenerarPedidoProveedorDialogState
                                 ),
                               ),
                             ),
-                            // 🔥 BOTÓN PROMO 🎁
+                            IconButton(
+                              constraints: const BoxConstraints(),
+                              padding: EdgeInsets.zero,
+                              tooltip: "Ver Kardex / Inventario",
+                              icon: const Icon(
+                                Icons.inventory,
+                                color: Colors.purple,
+                              ),
+                              onPressed: () {
+                                // showDialog(context: context, builder: (_) => KardexFlotanteDialog(codigoProducto: codigo));
+                              },
+                            ),
+                            const SizedBox(width: 8),
                             IconButton(
                               constraints: const BoxConstraints(),
                               padding: EdgeInsets.zero,
@@ -1394,7 +1631,6 @@ class _GenerarPedidoProveedorDialogState
                               onPressed: () => _agregarPromocion(item),
                             ),
                             const SizedBox(width: 8),
-                            // BOTÓN ELIMINAR
                             IconButton(
                               constraints: const BoxConstraints(),
                               padding: EdgeInsets.zero,
@@ -1413,7 +1649,7 @@ class _GenerarPedidoProveedorDialogState
                             Row(
                               children: [
                                 const Text(
-                                  "Cant:",
+                                  "Cant: ",
                                   style: TextStyle(
                                     color: Colors.grey,
                                     fontSize: 12,
@@ -1426,14 +1662,37 @@ class _GenerarPedidoProveedorDialogState
                                     Icons.remove_circle_outline,
                                     color: Colors.blueGrey,
                                   ),
-                                  onPressed: () =>
-                                      _actualizarCantidad(item, -1),
+                                  onPressed: () => _modificarCantidadBoton(
+                                    item,
+                                    uniqueKey,
+                                    -1,
+                                  ),
                                 ),
-                                Text(
-                                  "${item["cantidad_pedida"]}",
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 15,
+                                SizedBox(
+                                  width: 45,
+                                  height: 25,
+                                  child: TextField(
+                                    controller: cantController,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                    onSubmitted: (val) {
+                                      _guardarCantidadEscrita(
+                                        item,
+                                        uniqueKey,
+                                        val,
+                                      );
+                                    },
                                   ),
                                 ),
                                 IconButton(
@@ -1443,14 +1702,46 @@ class _GenerarPedidoProveedorDialogState
                                     Icons.add_circle_outline,
                                     color: Colors.blueGrey,
                                   ),
-                                  onPressed: () => _actualizarCantidad(item, 1),
+                                  onPressed: () => _modificarCantidadBoton(
+                                    item,
+                                    uniqueKey,
+                                    1,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+
+                                DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value:
+                                        unidadesGlobales.contains(
+                                          item["unidad"],
+                                        )
+                                        ? item["unidad"]
+                                        : unidadesGlobales.first,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.blueGrey,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    iconSize: 16,
+                                    items: unidadesGlobales.map((u) {
+                                      return DropdownMenuItem(
+                                        value: u,
+                                        child: Text(u),
+                                      );
+                                    }).toList(),
+                                    onChanged: (newVal) {
+                                      if (newVal != null)
+                                        _cambiarUnidadMedidaItem(item, newVal);
+                                    },
+                                  ),
                                 ),
                               ],
                             ),
                             Row(
                               children: [
                                 const Text(
-                                  "Desc Indv(%): ",
+                                  "Desc(%): ",
                                   style: TextStyle(
                                     color: Colors.grey,
                                     fontSize: 11,
@@ -1462,7 +1753,7 @@ class _GenerarPedidoProveedorDialogState
                                   child: TextField(
                                     controller: _getDescItemController(
                                       uniqueKey,
-                                    ), // 🔥 USO DE CLAVE ÚNICA
+                                    ),
                                     keyboardType: TextInputType.number,
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(fontSize: 12),
@@ -1478,40 +1769,92 @@ class _GenerarPedidoProveedorDialogState
                           ],
                         ),
 
-                        Text(
-                          "Stock: $stock (Mín: $minimo)",
-                          style: TextStyle(
-                            color: Colors.green.shade700,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 11,
-                          ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              "Stock: $stock (Mín: $minimo)",
+                              style: TextStyle(
+                                color: Colors.green.shade700,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
+
+                            Row(
+                              children: [
+                                const Text(
+                                  "Costo a pedir (\$): ",
+                                  style: TextStyle(
+                                    color: Colors.black87,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 65,
+                                  height: 25,
+                                  child: TextField(
+                                    controller: costoController,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    decoration: const InputDecoration(
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                    onChanged: (_) => setState(() {}),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
+
                         const Divider(height: 12),
 
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    textoCosto,
+                                    txtMejorCosto,
                                     style: const TextStyle(
                                       color: Colors.green,
                                       fontWeight: FontWeight.bold,
-                                      fontSize: 12,
+                                      fontSize: 11,
                                     ),
                                   ),
-                                  if (provMasBarato.isNotEmpty)
+                                  if (txtMejorProv.isNotEmpty)
                                     Text(
-                                      "Prov: $provMasBarato",
+                                      txtMejorProv,
                                       style: TextStyle(
-                                        color: Colors.orange.shade800,
-                                        fontSize: 11,
+                                        color: Colors.green.shade700,
+                                        fontSize: 10,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
+
+                                  const SizedBox(height: 4),
+
+                                  Text(
+                                    "Último con $prov: \$${ultimoCostoProv.toStringAsFixed(4)}",
+                                    style: TextStyle(
+                                      color: Colors.blue.shade700,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -1623,6 +1966,19 @@ class _BuscadorProductosSheetState extends State<_BuscadorProductosSheet> {
   String? _error;
 
   Future<void> _escanearCodigo() async {
+    if (kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "La cámara no está soportada en el navegador Web. Usa un dispositivo físico o emulador.",
+            style: TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     try {
       String barcodeScanRes = await FlutterBarcodeScanner.scanBarcode(
         "#ff6666",
