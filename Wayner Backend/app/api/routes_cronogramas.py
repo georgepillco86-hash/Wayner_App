@@ -25,3 +25,25 @@ async def mis_notificaciones(x_usuario: Optional[str] = Header(None)):
 async def leer_notificacion(id_notif: int):
     crono_repo.marcar_notificacion_leida(id_notif)
     return {"success": True}
+
+# =====================================================================
+# 🔥 NUEVAS RUTAS PARA LA ADMINISTRACIÓN DE PROVEEDORES (SECUENCIAS) 🔥
+# =====================================================================
+
+@router.get("/secuencias")
+async def listar_secuencias():
+    try:
+        secuencias = crono_repo.obtener_secuencias_programadas()
+        return {"status": "success", "data": secuencias}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/secuencias/{secuencia_id}")
+async def eliminar_secuencia(secuencia_id: int):
+    try:
+        eliminado = crono_repo.eliminar_secuencia(secuencia_id)
+        if not eliminado:
+            raise HTTPException(status_code=404, detail="Secuencia no encontrada")
+        return {"status": "success", "message": "Secuencia eliminada correctamente"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

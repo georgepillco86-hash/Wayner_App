@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 
 # ---> NUEVO: Sub-molde para validar los pares de fechas relacionales
@@ -9,6 +9,7 @@ class ParVisitaEntrega(BaseModel):
 
 class CronogramaCreate(BaseModel):
     proveedor: str
+    contacto_celular: Optional[str] = ""        # <-- 🔥 NUEVO: Acepta el WhatsApp del proveedor
     frecuencia: str                     # <-- Cambiado de int a str ("Semanal", etc.)
     repetir_meses: int                  # <-- NUEVO: Duración del cronograma
     pares: List[ParVisitaEntrega]       # <-- NUEVO: Lista infinita de fechas
