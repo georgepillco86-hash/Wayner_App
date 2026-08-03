@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../data/models/visita_model.dart';
 import '../../data/services/cronograma_service.dart';
 import 'cronograma_form_screen.dart';
+import 'administracion_proveedores_screen.dart';
 
 class CalendarioScreen extends StatefulWidget {
   const CalendarioScreen({super.key});
@@ -35,10 +36,8 @@ class _CalendarioScreenState extends State<CalendarioScreen> {
         month,
       );
 
-      // Agrupar visitas por día exacto para el calendario
       final Map<DateTime, List<Visita>> visitasAgrupadas = {};
       for (var v in visitas) {
-        // Ignorar la hora para la agrupación en el calendario
         final fechaDia = DateTime(
           v.fechaProgramada.year,
           v.fechaProgramada.month,
@@ -50,16 +49,19 @@ class _CalendarioScreenState extends State<CalendarioScreen> {
 
       setState(() => _visitasMes = visitasAgrupadas);
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // Función para obtener eventos de un día específico
   List<Visita> _getVisitasDelDia(DateTime day) {
     final normalizedDay = DateTime(day.year, day.month, day.day);
     return _visitasMes[normalizedDay] ?? [];
@@ -72,11 +74,38 @@ class _CalendarioScreenState extends State<CalendarioScreen> {
         : [];
 
     return Scaffold(
+      backgroundColor:
+          Colors.grey.shade50, // Fondo general ligeramente gris para contraste
       appBar: AppBar(
-        title: const Text('Calendario de Pedidos'),
+        title: const Text(
+          'Calendario de Pedidos',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        centerTitle: true,
+        elevation: 0,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black87,
         actions: [
           IconButton(
-            icon: const Icon(Icons.add),
+            icon: Icon(
+              Icons.format_list_bulleted,
+              color: Colors.blueGrey.shade700,
+            ),
+            tooltip: 'Administración de proveedores',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AdministracionProveedoresScreen(
+                    onChanged: () =>
+                        _cargarMes(_focusedDay.year, _focusedDay.month),
+                  ),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: Icon(Icons.add_circle, color: Theme.of(context).primaryColor),
             tooltip: 'Programar Nuevo',
             onPressed: () => Navigator.push(
               context,
@@ -88,101 +117,243 @@ class _CalendarioScreenState extends State<CalendarioScreen> {
               ),
             ),
           ),
+          const SizedBox(width: 8),
         ],
       ),
       body: Column(
         children: [
-          // 1. EL CALENDARIO
-          TableCalendar<Visita>(
-            firstDay: DateTime.now().subtract(const Duration(days: 365)),
-            lastDay: DateTime.now().add(const Duration(days: 365)),
-            focusedDay: _focusedDay,
-            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-            calendarFormat: CalendarFormat.month,
-            eventLoader: _getVisitasDelDia,
-            startingDayOfWeek: StartingDayOfWeek.monday,
+          // 1. EL CALENDARIO (CONTENEDOR BLANCO)
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.only(bottom: 12),
+            child: TableCalendar<Visita>(
+              firstDay: DateTime.now().subtract(const Duration(days: 365)),
+              lastDay: DateTime.now().add(const Duration(days: 365)),
+              focusedDay: _focusedDay,
+              selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+              calendarFormat: CalendarFormat.month,
+              eventLoader: _getVisitasDelDia,
+              startingDayOfWeek: StartingDayOfWeek.monday,
 
-            // Cuando el usuario cambia de mes deslizando
-            onPageChanged: (focusedDay) {
-              _focusedDay = focusedDay;
-              _cargarMes(focusedDay.year, focusedDay.month);
-            },
-
-            // Cuando el usuario toca un día
-            onDaySelected: (selectedDay, focusedDay) {
-              if (!isSameDay(_selectedDay, selectedDay)) {
-                setState(() {
-                  _selectedDay = selectedDay;
-                  _focusedDay = focusedDay;
-                });
-              }
-            },
-
-            // Estilos
-            calendarStyle: const CalendarStyle(
-              markerDecoration: BoxDecoration(
-                color: Colors.redAccent,
-                shape: BoxShape.circle,
+              // Estilo de la cabecera (Mes y Año)
+              headerStyle: const HeaderStyle(
+                formatButtonVisible: false,
+                titleCentered: true,
+                titleTextStyle: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-              todayDecoration: BoxDecoration(
-                color: Colors.blueGrey,
-                shape: BoxShape.circle,
-              ),
-              selectedDecoration: BoxDecoration(
-                color: Colors.blue,
-                shape: BoxShape.circle,
+
+              onPageChanged: (focusedDay) {
+                _focusedDay = focusedDay;
+                _cargarMes(focusedDay.year, focusedDay.month);
+              },
+
+              onDaySelected: (selectedDay, focusedDay) {
+                if (!isSameDay(_selectedDay, selectedDay)) {
+                  setState(() {
+                    _selectedDay = selectedDay;
+                    _focusedDay = focusedDay;
+                  });
+                }
+              },
+
+              // Estilos de los días
+              calendarStyle: CalendarStyle(
+                markerDecoration: const BoxDecoration(
+                  color: Colors.orangeAccent,
+                  shape: BoxShape.circle,
+                ),
+                markersMaxCount: 3,
+                todayDecoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                todayTextStyle: TextStyle(
+                  color: Colors.blue.shade800,
+                  fontWeight: FontWeight.bold,
+                ),
+                selectedDecoration: const BoxDecoration(
+                  color: Colors.blue,
+                  shape: BoxShape.circle,
+                ),
+                outsideDaysVisible: false,
               ),
             ),
           ),
 
-          const Divider(),
-          const Text(
-            'Pedidos para este día:',
-            style: TextStyle(fontWeight: FontWeight.bold),
+          // 2. BANNER SEPARADOR ELEGANTE
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              border: Border(
+                top: BorderSide(color: Colors.grey.shade300),
+                bottom: BorderSide(color: Colors.grey.shade200),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.calendar_today,
+                  size: 18,
+                  color: Colors.blueGrey.shade600,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Pedidos del ${DateFormat('dd MMM yyyy').format(_selectedDay ?? _focusedDay)}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: Colors.blueGrey.shade800,
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 8),
 
-          // 2. LISTA DE PEDIDOS DEL DÍA SELECCIONADO
+          // 3. LISTA DE PEDIDOS DEL DÍA SELECCIONADO
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : visitasSeleccionadas.isEmpty
-                ? const Center(
-                    child: Text('No hay pedidos programados para esta fecha.'),
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.inbox_outlined,
+                          size: 48,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Día libre de pedidos',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
                   )
                 : ListView.builder(
+                    padding: const EdgeInsets.only(top: 8, bottom: 24),
                     itemCount: visitasSeleccionadas.length,
                     itemBuilder: (context, index) {
                       final visita = visitasSeleccionadas[index];
+                      final esPendiente =
+                          visita.estado.toLowerCase() == 'pendiente';
+
                       return Card(
+                        elevation: 0,
                         margin: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 6,
                         ),
-                        child: ListTile(
-                          leading: const CircleAvatar(
-                            child: Icon(Icons.local_shipping),
-                          ),
-                          title: Text(
-                            visita.proveedor,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Text(
-                            'Hora: ${DateFormat('HH:mm').format(visita.fechaProgramada)}\n'
-                            'Responsables: ${visita.usuariosVinculados.join(", ")}',
-                          ),
-                          trailing: Chip(
-                            label: Text(
-                              visita.estado,
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: ListTile(
+                            // Ícono con fondo
+                            leading: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(
+                                Icons.local_shipping,
+                                color: Colors.blue.shade700,
+                                size: 24,
                               ),
                             ),
-                            backgroundColor: visita.estado == 'Pendiente'
-                                ? Colors.orange
-                                : Colors.green,
-                            padding: EdgeInsets.zero,
+                            title: Text(
+                              visita.proveedor,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.access_time,
+                                        size: 14,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        DateFormat(
+                                          'HH:mm',
+                                        ).format(visita.fechaProgramada),
+                                        style: TextStyle(
+                                          color: Colors.grey.shade700,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.person_outline,
+                                        size: 14,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(
+                                          visita.usuariosVinculados.join(", "),
+                                          style: TextStyle(
+                                            color: Colors.grey.shade700,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // Etiqueta de Estado (Chip Moderno)
+                            trailing: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: esPendiente
+                                    ? Colors.orange.shade50
+                                    : Colors.green.shade50,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: esPendiente
+                                      ? Colors.orange.shade200
+                                      : Colors.green.shade200,
+                                ),
+                              ),
+                              child: Text(
+                                visita.estado,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: esPendiente
+                                      ? Colors.orange.shade800
+                                      : Colors.green.shade800,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       );

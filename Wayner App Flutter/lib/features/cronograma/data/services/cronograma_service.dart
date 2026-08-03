@@ -17,12 +17,13 @@ class CronogramaService {
   }
 
   // 1. Crear una nueva programación
-  // 1. Crear una nueva programación
   Future<bool> crearProgramacion({
     required String proveedor,
-    required String frecuencia, // Ahora es un texto
-    required List<Map<String, DateTime>> paresVisitaEntrega, // Lista de pares
-    required int repetirMeses, // La duración del cronograma
+    required String
+    contactoCelular, // 🔥 NUEVO: Recibimos el número de WhatsApp
+    required String frecuencia,
+    required List<Map<String, DateTime>> paresVisitaEntrega,
+    required int repetirMeses,
     required List<String> usuariosVinculados,
   }) async {
     final response = await http.post(
@@ -30,6 +31,7 @@ class CronogramaService {
       headers: await _getHeaders(),
       body: jsonEncode({
         'proveedor': proveedor,
+        'contacto_celular': contactoCelular, // 🔥 NUEVO: Lo enviamos al backend
         'frecuencia': frecuencia,
         'repetir_meses': repetirMeses,
         'usuarios_vinculados': usuariosVinculados,
@@ -101,5 +103,38 @@ class CronogramaService {
     }
     // Si hay un error, devolvemos una lista vacía para no romper la pantalla
     return [];
+  }
+
+  // =====================================================================
+  // 🔥 NUEVOS MÉTODOS PARA LA ADMINISTRACIÓN DE PROVEEDORES 🔥
+  // =====================================================================
+
+  // 5. Obtener lista de secuencias agrupadas (Para la pantalla de administración)
+  Future<List<dynamic>> obtenerSecuenciasProgramadas() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/secuencias'),
+      headers: await _getHeaders(),
+    );
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> body = jsonDecode(response.body);
+      if (body['status'] == 'success') {
+        return body['data'] as List<dynamic>;
+      }
+      return [];
+    }
+    throw Exception('Error al cargar las secuencias programadas');
+  }
+
+  // 6. Eliminar una secuencia completa
+  Future<void> eliminarSecuencia(int id) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/secuencias/$id'),
+      headers: await _getHeaders(),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Error al eliminar la secuencia');
+    }
   }
 }

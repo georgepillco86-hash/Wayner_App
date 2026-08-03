@@ -6,13 +6,14 @@ import '../../../usuarios/models/usuario.dart';
 
 class CronogramaFormScreen extends StatefulWidget {
   final VoidCallback onSaved;
-  final String?
-  proveedorInicial; // <-- NUEVO: Para recibir el redireccionamiento directo
+  final String? proveedorInicial;
+  final Map<String, dynamic>? secuenciaAEditar;
 
   const CronogramaFormScreen({
     super.key,
     required this.onSaved,
     this.proveedorInicial,
+    this.secuenciaAEditar,
   });
 
   @override
@@ -24,24 +25,21 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
   final _usuariosService = UsuariosService();
 
   final _proveedorController = TextEditingController();
-  final _celularController =
-      TextEditingController(); // 🔥 NUEVO: Controlador para el WhatsApp
+  final _celularController = TextEditingController();
   String? _proveedorSeleccionado;
 
-  // ---> MODIFICADO: Frecuencia ahora es tipo String para empalmar con el Backend
   String _frecuenciaSeleccionada = 'Semanal';
   final List<String> _opcionesFrecuencia = ['Semanal', 'Quincenal', 'Mensual'];
 
-  // ---> NUEVO: Duración de la secuencia (Repetir secuencia)
-  int _repetirMeses = 1;
+  // 🔥 CAMBIO: Por defecto 3 meses, y eliminamos la opción de 5 años
+  int _repetirMeses = 3;
   final Map<int, String> _opcionesDuracion = {
     1: '1 Mes',
+    3: '3 Meses (Ventana Móvil Recomendada)',
     6: 'Medio Año (6 meses)',
     12: '1 Año',
-    60: 'Para Siempre (Proyectar 5 años)',
   };
 
-  // ---> NUEVO: Lista dinámica de Pares Relacionales (Visita conectada a su Entrega)
   List<Map<String, DateTime>> _paresVisitaEntrega = [];
 
   List<Usuario> _usuariosDb = [];
@@ -60,27 +58,15 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
   @override
   void dispose() {
     _proveedorController.dispose();
-    _celularController.dispose(); // 🔥 NUEVO: Dispose del controlador
+    _celularController.dispose();
     super.dispose();
   }
 
   void _inicializarParVacio() {
     final ahora = DateTime.now();
     _paresVisitaEntrega.add({
-      'visita': DateTime(
-        ahora.year,
-        ahora.month,
-        ahora.day,
-        9,
-        0,
-      ), // 09:00 AM por defecto
-      'entrega': DateTime(
-        ahora.year,
-        ahora.month,
-        ahora.day + 2,
-        12,
-        0,
-      ), // 2 días después
+      'visita': DateTime(ahora.year, ahora.month, ahora.day, 9, 0),
+      'entrega': DateTime(ahora.year, ahora.month, ahora.day + 2, 12, 0),
     });
   }
 
@@ -120,8 +106,61 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
           _usuariosDb = usuarios;
           _proveedoresDb = proveedores;
 
-          // Si nos enviaron un proveedor desde el inventario, lo pre-seleccionamos
-          if (widget.proveedorInicial != null &&
+          if (widget.secuenciaAEditar != null) {
+            final seq = widget.secuenciaAEditar!;
+
+            // 1. Proveedor
+            _proveedorController.text = seq['proveedor'] ?? '';
+            if (_proveedoresDb.contains(seq['proveedor'])) {
+              _proveedorSeleccionado = seq['proveedor'];
+            }
+
+            // 2. Celular (WhatsApp)
+            _celularController.text = seq['contacto_celular']?.toString() ?? '';
+
+            // 3. Frecuencia
+            final frecDb = seq['frecuencia'];
+            if (frecDb == 7)
+              _frecuenciaSeleccionada = 'Semanal';
+            else if (frecDb == 15)
+              _frecuenciaSeleccionada = 'Quincenal';
+            else if (frecDb == 30)
+              _frecuenciaSeleccionada = 'Mensual';
+
+            // 4. Usuarios Vinculados
+            final usuariosJson = seq['usuarios_vinculados'];
+            if (usuariosJson is List) {
+              _usuariosVinculados.addAll(usuariosJson.map((e) => e.toString()));
+            }
+
+            // 5. FECHAS - Extraer la próxima visita y entrega REAL desde la tabla cronograma_visitas
+            if (seq['proxima_visita'] != null) {
+              try {
+                final proximaVisita = DateTime.parse(
+                  seq['proxima_visita'].toString(),
+                );
+
+                DateTime proximaEntrega;
+                if (seq['proxima_entrega'] != null) {
+                  proximaEntrega = DateTime.parse(
+                    seq['proxima_entrega'].toString(),
+                  );
+                } else {
+                  // Respaldo de seguridad por si la entrega viene nula
+                  proximaEntrega = proximaVisita.add(const Duration(days: 2));
+                }
+
+                // Reemplazamos el par por defecto con los datos reales vigentes
+                _paresVisitaEntrega = [
+                  {'visita': proximaVisita, 'entrega': proximaEntrega},
+                ];
+              } catch (e) {
+                debugPrint(
+                  'Error al leer fechas de próxima visita/entrega: $e',
+                );
+              }
+            }
+          } else if (widget.proveedorInicial != null &&
               widget.proveedorInicial!.isNotEmpty) {
             _proveedorSeleccionado = widget.proveedorInicial;
             _proveedorController.text = widget.proveedorInicial!;
@@ -140,17 +179,16 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
     }
   }
 
-  // Selector unificado de fecha y hora para la lista de pares
   Future<void> _seleccionarFechaHoraPar(int index, String tipoKey) async {
     final DateTime fechaBase = _paresVisitaEntrega[index][tipoKey]!;
 
     final fecha = await showDatePicker(
       context: context,
       initialDate: fechaBase,
-      firstDate: DateTime.now().subtract(
-        const Duration(days: 365),
-      ), // Permitir margen histórico si se edita
-      lastDate: DateTime(2035),
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(
+        const Duration(days: 365 * 2),
+      ), // Limitar a 2 años máximo
     );
     if (fecha == null) return;
 
@@ -170,7 +208,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
         hora.minute,
       );
 
-      // Validación relacional automática: Si la entrega queda antes que la visita, la movemos hacia adelante
       if (tipoKey == 'visita') {
         final entregaActual = _paresVisitaEntrega[index]['entrega']!;
         if (entregaActual.isBefore(_paresVisitaEntrega[index]['visita']!)) {
@@ -185,8 +222,7 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
 
   Future<void> _guardar() async {
     final nombreProveedor = _proveedorController.text.trim();
-    // Aquí puedes capturar el celular si necesitas mandarlo al backend más adelante
-    // final numeroCelular = _celularController.text.trim();
+    final numeroCelular = _celularController.text.trim();
 
     if (nombreProveedor.isEmpty || _usuariosVinculados.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -202,10 +238,9 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // El repositorio procesará la lista de pares relacionales y aplicará
-      // la sobreescritura automática limpia sobre ferrotienda.cronograma_visitas
       await _cronogramaService.crearProgramacion(
         proveedor: nombreProveedor,
+        contactoCelular: numeroCelular,
         frecuencia: _frecuenciaSeleccionada,
         paresVisitaEntrega: _paresVisitaEntrega,
         repetirMeses: _repetirMeses,
@@ -239,8 +274,12 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final esEdicion = widget.secuenciaAEditar != null;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Programar Secuencia de Pedidos')),
+      appBar: AppBar(
+        title: Text(esEdicion ? 'Editar Secuencia' : 'Programar Secuencia'),
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
@@ -248,7 +287,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // --- SECCIÓN 1: PROVEEDOR MAESTRO ---
                   LayoutBuilder(
                     builder: (context, constraints) {
                       return DropdownMenu<String>(
@@ -275,7 +313,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 🔥 NUEVO: Campo de Contacto Celular para los reportes de WhatsApp
                   TextFormField(
                     controller: _celularController,
                     decoration: const InputDecoration(
@@ -288,7 +325,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // --- SECCIÓN 2: FRECUENCIA Y DURACIÓN (PARALELOS) ---
                   Row(
                     children: [
                       Expanded(
@@ -300,15 +336,9 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                           ),
                           items: _opcionesFrecuencia.map((frec) {
                             String label = frec;
-                            if (frec == 'Mensual') {
-                              label = '1 vez al mes (Mensual)';
-                            }
-                            if (frec == 'Quincenal') {
-                              label = '2 veces al mes (Quincenal)';
-                            }
-                            if (frec == 'Semanal') {
-                              label = '4 veces al mes (Semanal)';
-                            }
+                            if (frec == 'Mensual') label = '1 vez al mes';
+                            if (frec == 'Quincenal') label = '2 veces al mes';
+                            if (frec == 'Semanal') label = '4 veces al mes';
                             return DropdownMenuItem(
                               value: frec,
                               child: Text(label),
@@ -323,7 +353,7 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                         child: DropdownButtonFormField<int>(
                           value: _repetirMeses,
                           decoration: const InputDecoration(
-                            labelText: 'Repetir Secuencia por:',
+                            labelText: 'Proyectar por:',
                             border: OutlineInputBorder(),
                           ),
                           items: _opcionesDuracion.entries.map((entry) {
@@ -340,16 +370,16 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                   ),
                   const SizedBox(height: 20),
 
-                  // --- SECCIÓN 3: PARES RELACIONALES DINÁMICOS ---
-                  const Row(
+                  Row(
                     children: [
-                      Icon(Icons.link, color: Colors.grey),
-                      SizedBox(width: 8),
+                      const Icon(Icons.link, color: Colors.grey),
+                      const SizedBox(width: 8),
                       Text(
                         'Configuración de Visitas y Entregas Conectadas:',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          fontSize: 15,
+                          fontSize: 14,
+                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ),
                     ],
@@ -400,7 +430,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              // Sub-botón 1: Día de Visita
                               ListTile(
                                 dense: true,
                                 contentPadding: EdgeInsets.zero,
@@ -428,7 +457,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                                     _seleccionarFechaHoraPar(index, 'visita'),
                               ),
                               const Divider(height: 8),
-                              // Sub-botón 2: Día de Entrega Relacionado
                               ListTile(
                                 dense: true,
                                 contentPadding: EdgeInsets.zero,
@@ -471,7 +499,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                   ),
                   const SizedBox(height: 24),
 
-                  // --- SECCIÓN 4: USUARIOS VINCULADOS ---
                   const Text(
                     'Usuarios Asignados para Alertas:',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
@@ -514,7 +541,6 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                   ),
                   const SizedBox(height: 28),
 
-                  // --- BOTÓN FINAL GUARDAR ---
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -522,10 +548,12 @@ class _CronogramaFormScreenState extends State<CronogramaFormScreen> {
                       foregroundColor: Theme.of(context).colorScheme.onPrimary,
                     ),
                     onPressed: _guardar,
-                    icon: const Icon(Icons.cloud_upload),
-                    label: const Text(
-                      'Proyectar y Generar Calendario',
-                      style: TextStyle(
+                    icon: Icon(esEdicion ? Icons.update : Icons.cloud_upload),
+                    label: Text(
+                      esEdicion
+                          ? 'Actualizar y Re-proyectar Calendario'
+                          : 'Proyectar y Generar Calendario',
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
