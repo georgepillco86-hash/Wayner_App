@@ -1,10 +1,21 @@
 from typing import Any, List
 from app.core.database import db 
 from app.core.pedidos_database import pedidos_db 
+import datetime
 
 class MermaRepository:
     TABLE_NAME = "ferrotienda.mermas" 
     HISTORY_TABLE = "ferrotienda.reporte_mermas"
+
+    def _get_merma_con_contacto(self, merma_id: int) -> dict:
+        query = f"""
+        SELECT m.*, cp.contacto AS contacto_proveedor
+        FROM {self.TABLE_NAME} m
+        LEFT JOIN ferrotienda.cronograma_pedidos cp 
+          ON UPPER(TRIM(m.proveedor)) = UPPER(TRIM(cp.proveedor))
+        WHERE m.id = %s
+        """
+        return pedidos_db.fetch_one(query, (merma_id,))
 
     def get_proveedores(self, codigo: str) -> str:
         query = """
@@ -41,17 +52,22 @@ class MermaRepository:
         )
         merma_id = pedidos_db.execute(query, params)
         
-        # Registrar el primer mensaje en el historial automáticamente
         historial_query = f"""
         INSERT INTO {self.HISTORY_TABLE} (merma_id, usuario, estado_anterior, estado_nuevo, comentario)
         VALUES (%s, %s, 'Ninguno', 'Pendiente', 'Ingreso inicial de merma registrado.')
         """
         pedidos_db.execute(historial_query, (merma_id, usuario))
         
-        return pedidos_db.fetch_one(f"SELECT * FROM {self.TABLE_NAME} WHERE id = %s", (merma_id,))
+        return self._get_merma_con_contacto(merma_id)
 
     def get_all(self) -> List[dict]:
-        query = f"SELECT * FROM {self.TABLE_NAME} ORDER BY fecha_registro DESC"
+        query = f"""
+        SELECT m.*, cp.contacto AS contacto_proveedor
+        FROM {self.TABLE_NAME} m
+        LEFT JOIN ferrotienda.cronograma_pedidos cp 
+          ON UPPER(TRIM(m.proveedor)) = UPPER(TRIM(cp.proveedor))
+        ORDER BY m.fecha_registro DESC
+        """
         return pedidos_db.fetch_all(query)
 
     def get_historial(self, merma_id: int) -> List[dict]:
@@ -59,7 +75,13 @@ class MermaRepository:
         return pedidos_db.fetch_all(query, (merma_id,))
 
     def update(self, merma_id: int, data: dict, usuario: str, rol: str) -> dict | None:
-        # Si NO es ADMIN, verificamos que sea el dueño y esté dentro de los 3 días
+        # 🔥 MENSAJES DE ALERTA PARA LA CONSOLA DE PYTHON 🔥
+        print("\n" + "="*50)
+        print(f"🚨 DEBUG ACTUALIZAR MERMA ID: {merma_id} 🚨")
+        print(f"Datos crudos que llegaron al repositorio:")
+        print(data)
+        print("="*50 + "\n")
+
         if rol != 'ADMIN':
             check_query = f"""
             SELECT id FROM {self.TABLE_NAME} 
@@ -74,12 +96,22 @@ class MermaRepository:
         UPDATE {self.TABLE_NAME}
         SET cantidad = COALESCE(%s, cantidad),
             novedad = COALESCE(%s, novedad),
-            comentario = COALESCE(%s, comentario)
+            comentario = COALESCE(%s, comentario),
+            proveedor = COALESCE(%s, proveedor)
         WHERE id = %s
         RETURNING id;
         """
-        pedidos_db.execute(query, (data.get("cantidad"), data.get("novedad"), data.get("comentario"), merma_id))
-        return pedidos_db.fetch_one(f"SELECT * FROM {self.TABLE_NAME} WHERE id = %s", (merma_id,))
+        pedidos_db.execute(
+            query, 
+            (
+                data.get("cantidad"), 
+                data.get("novedad"), 
+                data.get("comentario"), 
+                data.get("proveedor"), # Si esto dice 'None', la DB no lo cambia
+                merma_id
+            )
+        )
+        return self._get_merma_con_contacto(merma_id)
 
     def update_estado(self, merma_id: int, estado_nuevo: str, comentario: str, usuario: str, nota_credito: str = None) -> dict | None:
         if not comentario or comentario.strip() == "":
@@ -88,7 +120,6 @@ class MermaRepository:
         if estado_nuevo.upper() == 'RESUELTO' and (not nota_credito or nota_credito.strip() == ""):
             raise Exception("Debe ingresar el número de Nota de Crédito o justificación para resolver la merma.")
 
-        # Obtener estado actual
         merma = pedidos_db.fetch_one(f"SELECT estado FROM {self.TABLE_NAME} WHERE id = %s", (merma_id,))
         if not merma:
             raise Exception("Merma no encontrada.")
@@ -96,7 +127,6 @@ class MermaRepository:
 
         activo = False if estado_nuevo.upper() == 'RESUELTO' else True
         
-        # 1. Actualizar estado en la tabla principal
         query_update = f"""
         UPDATE {self.TABLE_NAME}
         SET estado = %s, activo = %s
@@ -105,7 +135,6 @@ class MermaRepository:
         """
         pedidos_db.execute(query_update, (estado_nuevo, activo, merma_id))
         
-        # 2. Guardar en el historial (Chat)
         mensaje_chat = comentario
         if estado_nuevo.upper() == 'RESUELTO':
              mensaje_chat = f"PROCESO FINALIZADO. Justificación/Nota de Crédito: {nota_credito}. Comentario: {comentario}"
@@ -117,7 +146,7 @@ class MermaRepository:
         """
         pedidos_db.execute(query_historial, (merma_id, usuario, estado_anterior, estado_nuevo, mensaje_chat, nota_credito))
 
-        return pedidos_db.fetch_one(f"SELECT * FROM {self.TABLE_NAME} WHERE id = %s", (merma_id,))
+        return self._get_merma_con_contacto(merma_id)
 
     def delete(self, merma_id: int, usuario: str, rol: str) -> bool:
         if rol == 'ADMIN':
@@ -128,3 +157,84 @@ class MermaRepository:
             deleted_id = pedidos_db.execute(query, (merma_id, usuario))
             
         return bool(deleted_id)
+    
+    def obtener_proveedores_por_producto(self, codigo_producto: str) -> list:
+        query = """
+        SELECT DISTINCT NombreProveedor 
+        FROM v_kardexproductos 
+        WHERE Codigo = %s 
+        AND NombreProveedor IS NOT NULL 
+        AND TRIM(NombreProveedor) <> '' 
+        AND UPPER(TRIM(NombreProveedor)) <> 'DUCHI SANCHEZ ROSA EMPERATRIZ'
+        ORDER BY NombreProveedor ASC
+        """
+        resultados = db.fetch_all(query, (codigo_producto,))
+        return [res['NombreProveedor'] for res in resultados] if resultados else []
+
+    def obtener_costos_producto(self, codigo_producto: str, proveedor: str) -> list:
+        query = """
+            SELECT 
+                CASE 
+                    WHEN COALESCE(IVA, 0) > 0 THEN Costo * (1 + (COALESCE(IVA, 0) / 100.0))
+                    ELSE Costo 
+                END AS costo_calculado,
+                MAX(Fecha) as ultima_fecha
+            FROM v_kardexproductos
+            WHERE Codigo = %s 
+              AND UPPER(TRIM(NombreProveedor)) = UPPER(TRIM(%s))
+              AND UPPER(TRIM(Documento)) = 'FACTURA DE COMPRA'
+            GROUP BY 1
+            ORDER BY ultima_fecha DESC;
+        """
+        resultados = db.fetch_all(query, (codigo_producto, proveedor))
+        return [float(res['costo_calculado']) for res in resultados] if resultados else []
+
+    def registrar_despacho(self, merma_id: int, data: dict, usuario: str) -> dict:
+        # 1. Obtener la merma actual (🔥 AÑADIDO: Traemos también el nombre y estado para el mensaje)
+        merma = pedidos_db.fetch_one(f"SELECT cantidad, cantidad_despachada, nombre_producto, estado FROM {self.TABLE_NAME} WHERE id = %s", (merma_id,))
+        if not merma:
+            raise Exception("Merma no encontrada.")
+            
+        nueva_cantidad_despachada = float(merma["cantidad_despachada"]) + float(data["cantidad_retirada"])
+        
+        if nueva_cantidad_despachada > float(merma["cantidad"]):
+            raise Exception("No puedes despachar más cantidad de la que existe en la merma.")
+
+        # 2. Guardar el despacho (Añadiendo la cédula a la tabla de despachos)
+        query_despacho = """
+        INSERT INTO ferrotienda.despacho_mermas 
+        (merma_id, nota_credito, persona_retira, cedula_retira, cantidad_retirada, firma_base64, usuario_registra)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        pedidos_db.execute(query_despacho, (
+            merma_id, 
+            data["nota_credito"], 
+            data["persona_retira"], 
+            data["cedula_retira"], 
+            data["cantidad_retirada"], 
+            data["firma_base64"], 
+            usuario
+        ))
+
+        # 3. Actualizar la merma (Progreso y Estado)
+        query_update_merma = f"""
+        UPDATE {self.TABLE_NAME}
+        SET cantidad_despachada = %s,
+            estado = 'Notificado'
+        WHERE id = %s
+        """
+        pedidos_db.execute(query_update_merma, (nueva_cantidad_despachada, merma_id))
+
+        # 4. Registrar en el historial (🔥 AÑADIDO: Formato exacto solicitado para el chat)
+        fecha_hora_actual = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+        
+        mensaje_chat = f"Hoy {fecha_hora_actual} se realiza el retiro de los productos: {merma['nombre_producto']} en estado: {merma['estado']} por parte de la persona: {data['persona_retira']} Nro de cedula: {data['cedula_retira']}."
+        
+        query_historial = f"""
+        INSERT INTO {self.HISTORY_TABLE} 
+        (merma_id, usuario, estado_anterior, estado_nuevo, comentario, nota_credito)
+        VALUES (%s, %s, %s, 'Notificado', %s, %s)
+        """
+        pedidos_db.execute(query_historial, (merma_id, usuario, merma["estado"], mensaje_chat, data["nota_credito"]))
+
+        return self._get_merma_con_contacto(merma_id)

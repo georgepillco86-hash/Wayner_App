@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from app.repositories.merma_repository import MermaRepository
 from app.schemas.merma import MermaCreate, MermaUpdate, MermaEstadoUpdate
 from typing import Optional
+from fastapi import APIRouter, HTTPException
+from app.schemas.merma import DespachoCreate 
 
 router = APIRouter()
 merma_repo = MermaRepository()
@@ -65,3 +67,30 @@ async def eliminar_merma(merma_id: int, current_user: dict = Depends(get_current
     if not eliminado:
         raise HTTPException(status_code=400, detail="No se pudo eliminar. Solo el creador original o un ADMIN puede hacerlo.")
     return {"success": True, "message": "Merma eliminada"}
+
+@router.get("/proveedores-producto")
+def obtener_proveedores_producto(codigo: str):
+    try:
+        repo = MermaRepository()
+        proveedores = repo.obtener_proveedores_por_producto(codigo)
+        return {"success": True, "data": proveedores}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/costos-historicos")
+def obtener_costos_historicos(codigo: str, proveedor: str):
+    try:
+        repo = MermaRepository()
+        costos = repo.obtener_costos_producto(codigo, proveedor)
+        return {"success": True, "data": costos}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{merma_id}/despacho")
+async def registrar_despacho_merma(merma_id: int, despacho: DespachoCreate, current_user: dict = Depends(get_current_user_headers)):
+    usuario = current_user.get("username")
+    try:
+        actualizada = merma_repo.registrar_despacho(merma_id, despacho.dict(), usuario)
+        return {"success": True, "data": actualizada, "message": "Despacho registrado correctamente"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
