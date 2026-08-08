@@ -90,4 +90,53 @@ class MermaService {
     );
     return response.statusCode == 200;
   }
+
+  Future<List<String>> obtenerProveedoresPorProducto(
+    String codigoProducto,
+  ) async {
+    try {
+      final uri = Uri.parse(
+        '$baseUrl/proveedores-producto',
+      ).replace(queryParameters: {'codigo': codigoProducto});
+      final response = await http.get(uri, headers: await _getHeaders());
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          final List<dynamic> provs = data['data'];
+          return provs.map((e) => e.toString()).toList();
+        }
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // =========================================================
+  // 🔥 MÉTODO: Obtener Costos Históricos Únicos 🔥
+  // =========================================================
+  Future<List<double>> obtenerCostosHistoricos(
+    String codigoProducto,
+    String proveedor,
+  ) async {
+    try {
+      final uri = Uri.parse('$baseUrl/costos-historicos').replace(
+        queryParameters: {'codigo': codigoProducto, 'proveedor': proveedor},
+      );
+
+      final response = await http.get(uri, headers: await _getHeaders());
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          final List<dynamic> costos = data['data'];
+          return costos.map((e) => double.parse(e.toString())).toList();
+        }
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
 }

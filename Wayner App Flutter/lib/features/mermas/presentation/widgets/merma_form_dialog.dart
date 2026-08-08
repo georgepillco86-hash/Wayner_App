@@ -37,8 +37,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
 
   bool _isSaving = false;
   bool _isSearching = false;
-
-  // 🔥 NUEVO: Variable de control para el Antirrebote (Debounce)
   String _ultimaBusqueda = '';
 
   @override
@@ -88,9 +86,7 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
             );
           }
         } finally {
-          if (mounted) {
-            setState(() => _isSearching = false);
-          }
+          if (mounted) setState(() => _isSearching = false);
         }
       }
     } else {
@@ -109,28 +105,37 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
     FocusScope.of(context).unfocus();
     setState(() => _isSaving = true);
 
-    if (widget.merma == null) {
-      final nuevaMerma = Merma(
-        codigo: _codigoController.text,
-        nombreProducto: _nombreController.text,
-        cantidad: double.parse(_cantidadController.text),
-        novedad: _novedadSeleccionada!,
-        comentario: _comentarioController.text,
-        estado: 'Pendiente',
-        usuario: '',
-        activo: true,
-      );
-      await _mermaService.crearMerma(nuevaMerma);
-    } else {
-      await _mermaService.actualizarMerma(widget.merma!.id!, {
-        'cantidad': double.parse(_cantidadController.text),
-        'novedad': _novedadSeleccionada,
-        'comentario': _comentarioController.text,
-      });
+    try {
+      if (widget.merma == null) {
+        final nuevaMerma = Merma(
+          codigo: _codigoController.text,
+          nombreProducto: _nombreController.text,
+          cantidad: double.parse(_cantidadController.text),
+          novedad: _novedadSeleccionada!,
+          comentario: _comentarioController.text,
+          estado: 'Pendiente',
+          usuario: '',
+          activo: true,
+        );
+        await _mermaService.crearMerma(nuevaMerma);
+      } else {
+        await _mermaService.actualizarMerma(widget.merma!.id!, {
+          'cantidad': double.parse(_cantidadController.text),
+          'novedad': _novedadSeleccionada,
+          'comentario': _comentarioController.text,
+        });
+      }
+      widget.onSave();
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
-
-    widget.onSave();
-    if (mounted) Navigator.pop(context);
   }
 
   @override
@@ -150,33 +155,23 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                 Autocomplete<ProductBalance>(
                   optionsBuilder: (TextEditingValue textEditingValue) async {
                     final query = textEditingValue.text.trim();
-
-                    if (query.length < 3) {
+                    if (query.length < 3)
                       return const Iterable<ProductBalance>.empty();
-                    }
 
-                    // 🔥 LÓGICA DE DEBOUNCE
                     _ultimaBusqueda = query;
                     await Future.delayed(const Duration(milliseconds: 500));
-
-                    // Si el usuario siguió escribiendo, cancelamos esta petición
-                    if (_ultimaBusqueda != query) {
+                    if (_ultimaBusqueda != query)
                       return const Iterable<ProductBalance>.empty();
-                    }
 
                     try {
                       final results = await _saldosService.searchProducts(
                         text: query,
                         limit: 10,
                       );
-
-                      // 🔥 LÓGICA DE DEDUPLICACIÓN
-                      // Usamos un Map donde la llave es el código para eliminar duplicados
                       final Map<String, ProductBalance> unicos = {};
                       for (var producto in results) {
                         unicos[producto.codigo] = producto;
                       }
-
                       return unicos.values.toList();
                     } catch (e) {
                       return const Iterable<ProductBalance>.empty();
@@ -190,9 +185,8 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                   },
                   fieldViewBuilder:
                       (context, controller, focusNode, onFieldSubmitted) {
-                        if (esEdicion && controller.text.isEmpty) {
+                        if (esEdicion && controller.text.isEmpty)
                           controller.text = widget.merma!.codigo;
-                        }
                         return TextFormField(
                           controller: controller,
                           focusNode: focusNode,
@@ -248,7 +242,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                   },
                 ),
                 const SizedBox(height: 12),
-
                 TextFormField(
                   controller: _nombreController,
                   decoration: InputDecoration(
@@ -269,7 +262,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                       v!.isEmpty ? 'Seleccione un producto' : null,
                 ),
                 const SizedBox(height: 12),
-
                 TextFormField(
                   controller: _cantidadController,
                   decoration: const InputDecoration(labelText: 'Cantidad'),
@@ -279,7 +271,6 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                       : null,
                 ),
                 const SizedBox(height: 12),
-
                 DropdownButtonFormField<String>(
                   value: _novedadSeleccionada,
                   decoration: const InputDecoration(
@@ -293,15 +284,12 @@ class _MermaFormDialogState extends State<MermaFormDialog> {
                     );
                   }).toList(),
                   onChanged: (val) {
-                    setState(() {
-                      _novedadSeleccionada = val;
-                    });
+                    setState(() => _novedadSeleccionada = val);
                   },
                   validator: (v) =>
                       v == null || v.isEmpty ? 'Seleccione una opción' : null,
                 ),
                 const SizedBox(height: 12),
-
                 TextFormField(
                   controller: _comentarioController,
                   decoration: const InputDecoration(

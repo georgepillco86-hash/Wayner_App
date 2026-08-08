@@ -623,7 +623,10 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                       // 🔥 AQUÍ ESTÁ LA MAGIA:
                       // Hemos eliminado el InkWell, el Dialog de carga, el API Call,
                       // y el Navigator.push. Ahora solo devolvemos la tarjeta limpia.
-                      return ProductCard(product: product);
+                      return ProductCard(
+                        product: product,
+                        esAdmin: esAdmin, // 🔥 SOLO AÑADIMOS ESTA LÍNEA
+                      );
                     },
                   ),
           ),

@@ -21,7 +21,8 @@ class PriceLabelPreview extends StatelessWidget {
     final code = productPrice?.codigoBarra ?? fallbackCode;
     final price = productPrice?.precioConIva ?? 0;
 
-    final qrData = '''
+    final qrData =
+        '''
 Producto: $name
 Código: $code
 Precio venta: \$${price.toStringAsFixed(2)}
@@ -29,72 +30,105 @@ Precio venta: \$${price.toStringAsFixed(2)}
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border.all(color: Colors.black, width: 3),
-        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.black, width: 4),
+        borderRadius: BorderRadius.circular(2),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            name,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w900,
-              color: Colors.black,
-              height: 1.1,
+          // --- 1. DESCRIPCIÓN ---
+          SizedBox(
+            width: double.infinity,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.center,
+              child: Text(
+                name.toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 38,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.black,
+                  letterSpacing: -0.8,
+                  height: 1.0,
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 18),
+
+          const SizedBox(height: 6), // Leve separación para respirar
+          // --- 2. SECCIÓN DE PRECIO Y QR ---
           Row(
+            // 🔥 Cambiado a center para "levantar" los elementos y ocupar el espacio superior
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              // --- COLUMNA IZQUIERDA: PRECIO ---
               Expanded(
                 flex: 55,
                 child: Column(
+                  // 🔥 Centrado para aprovechar la altura disponible
                   mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    const Text(
-                      'Precio de venta',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.black,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
+                    const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'PRECIO ESPECIAL',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 26, // 🔥 Más grande
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.5,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '\$${price.toStringAsFixed(2)}',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.black,
-                        fontSize: 42,
-                        fontWeight: FontWeight.w900,
-                        height: 1,
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        '\$${price.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 90, // 🔥 Aún más gigante
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -2.0,
+                          height: 1.0,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 26),
+
+              const SizedBox(width: 8), // 🔥 Barrera para evitar que choquen
+              // --- COLUMNA DERECHA: QR + CÓDIGO NUMÉRICO ---
               Expanded(
                 flex: 45,
-                child: Center(
-                  child: Container(
-                    color: Colors.white,
-                    padding: const EdgeInsets.all(4),
-                    child: QrImageView(
+                child: Column(
+                  // 🔥 Centrado para alinearse perfectamente con el precio
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    QrImageView(
                       data: qrData,
                       version: QrVersions.auto,
-                      size: 105,
+                      size: 140,
                       backgroundColor: Colors.white,
+                      padding: EdgeInsets.zero,
                     ),
-                  ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        code,
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 26, // 🔥 Código también más grande
+                          fontWeight: FontWeight.w900,
+                          height: 1.0,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],

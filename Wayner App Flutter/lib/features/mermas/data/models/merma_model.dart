@@ -10,6 +10,12 @@ class Merma {
   final String estado;
   final String usuario;
   final bool activo;
+  final String?
+  contactoProveedor; // 🔥 NUEVO: Celular del proveedor extraído de cronograma_pedidos
+  final double?
+  ultimoCosto; // 🔥 NUEVO: Costo histórico real obtenido de pedido_items
+  final double
+  cantidadDespachada; // 🔥 NUEVO: Progreso de los productos retirados
 
   Merma({
     this.id,
@@ -23,6 +29,9 @@ class Merma {
     required this.estado,
     required this.usuario,
     required this.activo,
+    this.contactoProveedor,
+    this.ultimoCosto,
+    this.cantidadDespachada = 0.0, // 🔥 NUEVO: Por defecto inicia en 0
   });
 
   factory Merma.fromJson(Map<String, dynamic> json) {
@@ -40,6 +49,14 @@ class Merma {
       estado: json['estado'] ?? 'Pendiente',
       usuario: json['usuario'] ?? '',
       activo: json['activo'] ?? true,
+      contactoProveedor: json['contacto_proveedor']?.toString(),
+      ultimoCosto: json['ultimo_costo'] != null
+          ? double.tryParse(json['ultimo_costo'].toString())
+          : null,
+      // 🔥 NUEVO: Extrae de la base de datos lo que ya se ha despachado
+      cantidadDespachada:
+          double.tryParse(json['cantidad_despachada']?.toString() ?? '0') ??
+          0.0,
     );
   }
 
@@ -48,8 +65,11 @@ class Merma {
       'codigo': codigo,
       'nombre_producto': nombreProducto,
       'cantidad': cantidad,
+      'proveedor': proveedor,
       'novedad': novedad,
       'comentario': comentario,
+      'ultimo_costo': ultimoCosto,
+      'cantidad_despachada': cantidadDespachada, // 🔥 NUEVO
     };
   }
 }
