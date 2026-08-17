@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart'
+    as http; // 🔥 Añadido para hacer la consulta a la API
 
 import '../models/promocion.dart';
 import '../services/promocion_service.dart';
@@ -14,7 +17,7 @@ class PromocionesScreen extends StatefulWidget {
 
 class _PromocionesScreenState extends State<PromocionesScreen> {
   final PromocionService _service = PromocionService();
-  
+
   final TextEditingController _textoController = TextEditingController();
   final TextEditingController _codigoController = TextEditingController();
 
@@ -49,9 +52,7 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
   Future<void> escanearCodigoFiltro() async {
     final codigo = await Navigator.push<String>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const BarcodeScannerScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
     );
 
     if (codigo == null || codigo.trim().isEmpty) return;
@@ -164,13 +165,14 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
     return '${two(value.day)}/${two(value.month)}/${value.year}';
   }
 
+  // 🔥 ACTUALIZADO: Función para desactivar con Isla Dinámica
   Future<void> desactivarPromocion(Promocion promocion) async {
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Desactivar promoción'),
         content: Text(
-          '¿Deseas desactivar la promoción de "${promocion.nombreProducto}"?',
+          '¿Deseas desactivar la promoción de "${promocion.nombreProducto}"? El precio regresará al valor base en BITS.',
         ),
         actions: [
           TextButton(
@@ -188,20 +190,73 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
     if (confirmar != true) return;
 
     try {
+      final rootOverlay = Navigator.of(context, rootNavigator: true).overlay!;
+
       await _service.desactivar(promocion.id);
+
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Promoción desactivada')),
+      // 🔥 Quitamos _service de aquí y llamamos la nueva versión
+      _iniciarRastreoRPA(
+        rootOverlay,
+        promocion.id,
+        "RPA desactivando precio...",
       );
 
       cargarPromociones();
     } catch (e) {
       if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+  // 🔥 ACTUALIZADO: Función para eliminar con Isla Dinámica
+  Future<void> eliminarPromocion(Promocion promocion) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Eliminar promoción'),
+        content: Text(
+          '¿Estás seguro de que deseas eliminar permanentemente "${promocion.nombreProducto}"? El precio regresará al valor base en BITS y esta acción no se puede deshacer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar != true) return;
+
+    try {
+      final rootOverlay = Navigator.of(context, rootNavigator: true).overlay!;
+
+      await _service.eliminar(promocion.id);
+
+      if (!mounted) return;
+
+      // 🔥 Quitamos _service de aquí y llamamos la nueva versión
+      _iniciarRastreoRPA(
+        rootOverlay,
+        promocion.id,
+        "RPA eliminando promoción...",
       );
+
+      cargarPromociones();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al eliminar: $e')));
     }
   }
 
@@ -257,8 +312,12 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
             children: [
               Text('Estado: $estadoTexto'),
               Text('Código: ${promocion.codigoBarra}'),
-              Text('Precio anterior: \$${promocion.precioAnterior.toStringAsFixed(2)}'),
-              Text('Precio promo: \$${promocion.precioActualProm.toStringAsFixed(2)}'),
+              Text(
+                'Precio anterior: \$${promocion.precioAnterior.toStringAsFixed(2)}',
+              ),
+              Text(
+                'Precio promo: \$${promocion.precioActualProm.toStringAsFixed(2)}',
+              ),
               Text('Ahorro: \$${promocion.ahorro.toStringAsFixed(2)}'),
               Text('Mecánica: ${promocion.mecanica ?? '-'}'),
               Text(
@@ -274,21 +333,46 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
             if (value == 'editar') {
               abrirFormulario(promocion: promocion);
             }
-
             if (value == 'desactivar') {
               desactivarPromocion(promocion);
+            }
+            if (value == 'eliminar') {
+              eliminarPromocion(promocion);
             }
           },
           itemBuilder: (_) => [
             const PopupMenuItem(
               value: 'editar',
-              child: Text('Editar'),
+              child: Row(
+                children: [
+                  Icon(Icons.edit, size: 20),
+                  SizedBox(width: 8),
+                  Text('Editar'),
+                ],
+              ),
             ),
             if (promocion.activa)
               const PopupMenuItem(
                 value: 'desactivar',
-                child: Text('Desactivar'),
+                child: Row(
+                  children: [
+                    Icon(Icons.block, size: 20),
+                    SizedBox(width: 8),
+                    Text('Desactivar'),
+                  ],
+                ),
               ),
+            const PopupMenuDivider(),
+            const PopupMenuItem(
+              value: 'eliminar',
+              child: Row(
+                children: [
+                  Icon(Icons.delete, color: Colors.red, size: 20),
+                  SizedBox(width: 8),
+                  Text('Eliminar', style: TextStyle(color: Colors.red)),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -330,9 +414,7 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
                       ),
                       onSubmitted: (_) => cargarPromociones(),
                     ),
-
                     const SizedBox(height: 10),
-
                     Row(
                       children: [
                         Expanded(
@@ -357,9 +439,7 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
                         ),
                       ],
                     ),
-
                     const SizedBox(height: 10),
-
                     DropdownButtonFormField<String>(
                       value: estadoSeleccionado,
                       isExpanded: true,
@@ -383,9 +463,7 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
                         cargarPromociones();
                       },
                     ),
-
                     const SizedBox(height: 10),
-
                     Row(
                       children: [
                         Expanded(
@@ -405,9 +483,7 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
                         ),
                       ],
                     ),
-
                     const SizedBox(height: 10),
-
                     Row(
                       children: [
                         Expanded(
@@ -441,24 +517,157 @@ class _PromocionesScreenState extends State<PromocionesScreen> {
               ),
             ),
           if (isLoading)
-            const Expanded(
-              child: Center(child: CircularProgressIndicator()),
-            )
+            const Expanded(child: Center(child: CircularProgressIndicator()))
           else if (promociones.isEmpty)
-            const Expanded(
-              child: Center(child: Text('No existen promociones')),
-            )
+            const Expanded(child: Center(child: Text('No existen promociones')))
           else
             Expanded(
               child: ListView.separated(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
                 itemCount: promociones.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemBuilder: (_, index) => _buildPromocionCard(promociones[index]),
+                itemBuilder: (_, index) =>
+                    _buildPromocionCard(promociones[index]),
               ),
             ),
         ],
       ),
     );
+  }
+}
+
+// ============================================================================
+// 🔥 WIDGET REUTILIZABLE: DYNAMIC ISLAND CONECTADO AL ENDPOINT RPA ORIGINAL 🔥
+// ============================================================================
+void _iniciarRastreoRPA(
+  OverlayState overlay,
+  int promoId,
+  String initialMessage,
+) async {
+  late OverlayEntry entry;
+  bool isPolling = true;
+  bool isSuccess = false;
+  String message = initialMessage;
+
+  entry = OverlayEntry(
+    builder: (context) => Positioned(
+      top: MediaQuery.of(context).padding.top + 10,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Material(
+          color: Colors.transparent,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.85,
+            ),
+            decoration: BoxDecoration(
+              color: isPolling
+                  ? Colors.indigo.shade800
+                  : (isSuccess ? Colors.green.shade700 : Colors.red.shade700),
+              borderRadius: BorderRadius.circular(40),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 8,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isPolling)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2.0,
+                    ),
+                  )
+                else
+                  Icon(
+                    isSuccess ? Icons.check_circle : Icons.cancel,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    message,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  overlay.insert(entry);
+
+  int intentos = 0;
+  const int maxIntentos = 15; // 45 segundos máximo
+
+  // 🔥 BUCLE DE MONITOREO APUNTANDO A TU ENDPOINT ORIGINAL
+  while (isPolling && intentos < maxIntentos) {
+    await Future.delayed(const Duration(seconds: 3));
+    intentos++;
+
+    try {
+      // 🎯 HACEMOS LA MISMA LLAMADA QUE HACÍA TU ANTIGUO POP-UP
+      final url = Uri.parse(
+        'http://192.168.2.79:5000/api/promociones/rpa/estado/$promoId',
+      );
+      final response = await http.get(url);
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final estadoDb = data['estado']?.toString().toUpperCase() ?? '';
+
+        if (estadoDb == 'COMPLETADO' || estadoDb == 'ERROR') {
+          isPolling = false;
+          isSuccess = (estadoDb == 'COMPLETADO');
+
+          // Leemos el mensaje del backend o ponemos uno por defecto
+          final msgBackend = data['mensaje']?.toString() ?? '';
+          if (msgBackend.isNotEmpty) {
+            message = isSuccess ? "✅ $msgBackend" : "❌ $msgBackend";
+          } else {
+            message = isSuccess
+                ? "✅ Precio actualizado en BITS"
+                : "❌ Error RPA ($estadoDb)";
+          }
+
+          entry.markNeedsBuild(); // Cambia color de la Isla Dinámica
+
+          await Future.delayed(const Duration(seconds: 4));
+          entry.remove();
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error consultando estado RPA: $e");
+    }
+  }
+
+  // Si se acaba el tiempo...
+  if (isPolling) {
+    message = "⚠️ El RPA tardó demasiado";
+    isSuccess = false;
+    entry.markNeedsBuild();
+    await Future.delayed(const Duration(seconds: 4));
+    entry.remove();
   }
 }

@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:convert'; // 🔥 Importante para decodificar la respuesta
 import 'package:flutter/material.dart';
+import 'package:http/http.dart'
+    as http; // 🔥 Importante para consultar al RPA directamente
 
 import '../models/promocion.dart';
 import '../services/promocion_service.dart';
@@ -7,10 +11,7 @@ import '../../saldos/presentation/screens/barcode_scanner_screen.dart';
 class PromocionFormScreen extends StatefulWidget {
   final Promocion? promocion;
 
-  const PromocionFormScreen({
-    super.key,
-    this.promocion,
-  });
+  const PromocionFormScreen({super.key, this.promocion});
 
   @override
   State<PromocionFormScreen> createState() => _PromocionFormScreenState();
@@ -78,9 +79,7 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
   Future<void> escanearCodigo() async {
     final codigo = await Navigator.push<String>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const BarcodeScannerScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
     );
 
     if (codigo == null || codigo.trim().isEmpty) return;
@@ -103,7 +102,9 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
     });
 
     try {
-      final producto = await _service.buscarProductoPorCodigo(codigoBarra.trim());
+      final producto = await _service.buscarProductoPorCodigo(
+        codigoBarra.trim(),
+      );
 
       if (!mounted) return;
 
@@ -113,7 +114,9 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
         precioBaseController.text = producto.precioConIva.toStringAsFixed(2);
 
         if (precioAnteriorController.text.trim().isEmpty) {
-          precioAnteriorController.text = producto.precioConIva.toStringAsFixed(2);
+          precioAnteriorController.text = producto.precioConIva.toStringAsFixed(
+            2,
+          );
         }
       });
 
@@ -123,9 +126,9 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Producto no encontrado: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Producto no encontrado: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -133,7 +136,7 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
         });
       }
     }
-  }  
+  }
 
   Future<void> seleccionarFechaInicio() async {
     final result = await showDatePicker(
@@ -178,7 +181,9 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
     if (precioPromo > precioAnterior) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('El precio promocional no puede ser mayor al precio anterior'),
+          content: Text(
+            'El precio promocional no puede ser mayor al precio anterior',
+          ),
         ),
       );
       return;
@@ -189,6 +194,8 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
     });
 
     try {
+      int idPromocionActual;
+
       if (esEdicion) {
         await _service.actualizar(
           id: widget.promocion!.id,
@@ -201,8 +208,9 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
           fechaFin: fechaFin,
           activa: activa,
         );
+        idPromocionActual = widget.promocion!.id;
       } else {
-        await _service.crear(
+        final nuevaPromocion = await _service.crear(
           codigoBarra: codigoController.text.trim(),
           nombreProducto: nombreController.text.trim(),
           precioBase: _toDouble(precioBaseController.text),
@@ -213,27 +221,28 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
           fechaFin: fechaFin,
           activa: activa,
         );
+
+        idPromocionActual = nuevaPromocion.id;
       }
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            esEdicion
-                ? 'Promoción actualizada correctamente'
-                : 'Promoción creada correctamente',
-          ),
-        ),
-      );
+      final rootOverlay = Navigator.of(context, rootNavigator: true).overlay!;
 
       Navigator.pop(context, true);
+
+      // 🔥 Quitamos el paso de '_service' y usamos texto personalizado
+      _iniciarRastreoRPA(
+        rootOverlay,
+        idPromocionActual,
+        "RPA actualizando precio...",
+      );
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -291,7 +300,8 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ahorro = _toDouble(precioAnteriorController.text) -
+    final ahorro =
+        _toDouble(precioAnteriorController.text) -
         _toDouble(precioPromoController.text);
 
     final porcentaje = _toDouble(precioAnteriorController.text) > 0
@@ -345,8 +355,8 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
                                 onPressed: isLoading
                                     ? null
                                     : () => buscarProductoPorCodigo(
-                                          codigoController.text.trim(),
-                                        ),
+                                        codigoController.text.trim(),
+                                      ),
                                 icon: const Icon(Icons.search),
                               ),
                             ),
@@ -409,8 +419,12 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
                                 style: TextStyle(fontWeight: FontWeight.bold),
                               ),
                               const SizedBox(height: 8),
-                              Text('Ahorro: \$${ahorro < 0 ? 0 : ahorro.toStringAsFixed(2)}'),
-                              Text('Mecánica: DESCUENTO ${porcentaje < 0 ? 0 : porcentaje}%'),
+                              Text(
+                                'Ahorro: \$${ahorro < 0 ? 0 : ahorro.toStringAsFixed(2)}',
+                              ),
+                              Text(
+                                'Mecánica: DESCUENTO ${porcentaje < 0 ? 0 : porcentaje}%',
+                              ),
                             ],
                           ),
                         ),
@@ -424,7 +438,9 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
                             child: OutlinedButton.icon(
                               onPressed: seleccionarFechaInicio,
                               icon: const Icon(Icons.calendar_month),
-                              label: Text('Inicio: ${_formatFecha(fechaInicio)}'),
+                              label: Text(
+                                'Inicio: ${_formatFecha(fechaInicio)}',
+                              ),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -461,15 +477,17 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
                               ? const SizedBox(
                                   width: 18,
                                   height: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : const Icon(Icons.save),
                           label: Text(
                             isLoading
                                 ? 'Guardando...'
                                 : esEdicion
-                                    ? 'Actualizar promoción'
-                                    : 'Guardar promoción',
+                                ? 'Actualizar promoción'
+                                : 'Guardar promoción',
                           ),
                         ),
                       ),
@@ -482,5 +500,139 @@ class _PromocionFormScreenState extends State<PromocionFormScreen> {
         ),
       ),
     );
+  }
+}
+
+// ============================================================================
+// 🔥 WIDGET REUTILIZABLE: DYNAMIC ISLAND APUNTANDO AL ENDPOINT ORIGINAL 🔥
+// ============================================================================
+void _iniciarRastreoRPA(
+  OverlayState overlay,
+  int promoId,
+  String initialMessage,
+) async {
+  late OverlayEntry entry;
+  bool isPolling = true;
+  bool isSuccess = false;
+  String message = initialMessage;
+
+  entry = OverlayEntry(
+    builder: (context) => Positioned(
+      top: MediaQuery.of(context).padding.top + 10,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Material(
+          color: Colors.transparent,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.85,
+            ),
+            decoration: BoxDecoration(
+              color: isPolling
+                  ? Colors.indigo.shade800
+                  : (isSuccess ? Colors.green.shade700 : Colors.red.shade700),
+              borderRadius: BorderRadius.circular(40),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 8,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isPolling)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2.0,
+                    ),
+                  )
+                else
+                  Icon(
+                    isSuccess ? Icons.check_circle : Icons.cancel,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    message,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  overlay.insert(entry);
+
+  int intentos = 0;
+  const int maxIntentos = 15; // 🔥 45 segundos de espera máxima
+
+  // 🔥 BUCLE DE MONITOREO CONECTADO A TU BACKEND
+  while (isPolling && intentos < maxIntentos) {
+    await Future.delayed(const Duration(seconds: 3));
+    intentos++;
+
+    try {
+      final url = Uri.parse(
+        'http://192.168.2.79:5000/api/promociones/rpa/estado/$promoId',
+      );
+      final response = await http.get(url);
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final estadoDb = data['estado']?.toString().toUpperCase() ?? '';
+
+        if (estadoDb == 'COMPLETADO' || estadoDb == 'ERROR') {
+          isPolling = false;
+          isSuccess = (estadoDb == 'COMPLETADO');
+
+          final msgBackend = data['mensaje']?.toString() ?? '';
+          if (msgBackend.isNotEmpty) {
+            message = isSuccess ? "✅ $msgBackend" : "❌ $msgBackend";
+          } else {
+            message = isSuccess
+                ? "✅ Precio actualizado en BITS"
+                : "❌ Error RPA ($estadoDb)";
+          }
+
+          entry.markNeedsBuild();
+
+          await Future.delayed(const Duration(seconds: 4));
+          entry.remove();
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error consultando estado RPA: $e");
+    }
+  }
+
+  // 🔥 SI SE ACABA EL TIEMPO
+  if (isPolling) {
+    message = "⚠️ El RPA tardó demasiado";
+    isSuccess = false;
+    entry.markNeedsBuild();
+    await Future.delayed(const Duration(seconds: 4));
+    entry.remove();
   }
 }

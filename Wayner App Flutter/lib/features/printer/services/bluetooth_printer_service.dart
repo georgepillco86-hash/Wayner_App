@@ -1,8 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
-import 'package:flutter/foundation.dart'
-    show kIsWeb; // Importante para detectar la Web
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
@@ -22,7 +21,6 @@ class BluetoothPrinterService {
   final ApiClient _apiClient = ApiClient();
 
   Future<List<BluetoothInfo>> getPairedDevices() async {
-    // Protección Web: Retorna lista vacía en lugar de buscar Bluetooth nativo
     if (kIsWeb) {
       debugPrint(
         "Web detectada: Retornando lista vacía de dispositivos Bluetooth.",
@@ -67,7 +65,6 @@ class BluetoothPrinterService {
   }
 
   Future<bool> connect(String macAddress) async {
-    // Protección Web: Simulamos conexión exitosa
     if (kIsWeb) {
       debugPrint(
         "Web detectada: Simulando conexión a impresora Bluetooth ($macAddress).",
@@ -85,15 +82,12 @@ class BluetoothPrinterService {
   }
 
   Future<void> disconnect() async {
-    // Protección Web: Evita ejecutar código nativo
     if (kIsWeb) return;
-
     await PrintBluetoothThermal.disconnect;
     await Future.delayed(const Duration(milliseconds: 500));
   }
 
   Future<bool> printPriceLabel({required ProductPrice productPrice}) async {
-    // Protección Web: Simulamos impresión exitosa para no bloquear la interfaz
     if (kIsWeb) {
       debugPrint(
         "Web detectada: Simulando impresión exitosa de ${productPrice.nombreProducto}",
@@ -113,7 +107,6 @@ class BluetoothPrinterService {
           detalle:
               'Intento de impresión sin conexión. Producto: ${productPrice.nombreProducto}, Código: ${productPrice.codigoBarra}, Impresora: ${printerName ?? '-'}',
         );
-
         throw Exception('La impresora no está conectada');
       }
 
@@ -148,7 +141,6 @@ class BluetoothPrinterService {
         detalle:
             'Error imprimiendo cenefa. Producto: ${productPrice.nombreProducto}, Código: ${productPrice.codigoBarra}, Error: $e',
       );
-
       rethrow;
     }
   }
@@ -180,32 +172,19 @@ class BluetoothPrinterService {
 
     final bytes = <int>[];
     bytes.addAll(generator.reset());
+    bytes.addAll(generator.feed(3));
 
-    if (promocion == null) {
-      bytes.addAll(generator.feed(3));
-
-      final labelImage = await _buildNormalLabelImage(productPrice);
-
-      bytes.addAll(
-        generator.imageRaster(
-          labelImage,
-          align: PosAlign.center,
-          highDensityHorizontal: true,
-          highDensityVertical: true,
-        ),
-      );
-
-      bytes.addAll(generator.feed(4));
-      return bytes;
-    }
-
-    bytes.addAll(generator.feed(12));
+    // Decidimos qué imagen generar en base a si existe una promoción
+    final img.Image labelImage = promocion == null
+        ? await _buildNormalLabelImage(productPrice)
+        : await _buildPromoLabelImage(productPrice, promocion);
 
     bytes.addAll(
-      await _buildPromotionEscPosLabel(
-        generator: generator,
-        productPrice: productPrice,
-        promocion: promocion,
+      generator.imageRaster(
+        labelImage,
+        align: PosAlign.center,
+        highDensityHorizontal: true,
+        highDensityVertical: true,
       ),
     );
 
@@ -213,243 +192,223 @@ class BluetoothPrinterService {
     return bytes;
   }
 
-  Future<List<int>> _buildPromotionEscPosLabel({
-    required Generator generator,
-    required ProductPrice productPrice,
-    required Promocion promocion,
-  }) async {
-    final bytes = <int>[];
+  // ==============================================================
+  // GENERADOR 1: ETIQUETA PROMOCIONAL (3X LARGO Y ALTO IMPACTO)
+  // ==============================================================
+  Future<img.Image> _buildPromoLabelImage(
+    ProductPrice productPrice,
+    Promocion promocion,
+  ) async {
+    const width = 384;
+    // 🔥 Aumentamos la altura a 800 para dar espacio a los textos divididos en 2 líneas
+    const height = 800;
 
-    final codigo = productPrice.codigoBarra.trim();
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    _drawWhiteBackground(canvas, width, height);
 
     final encabezado = _cleanText(
       promocion.encabezado?.isNotEmpty == true
           ? promocion.encabezado!
-          : 'PROMOCION',
+          : 'OFERTA',
     );
-
     final nombre = _cleanText(
       promocion.nombreProducto.isNotEmpty
           ? promocion.nombreProducto
           : productPrice.nombreProducto,
     );
+    final oldPrice = '\$${promocion.precioAnterior.toStringAsFixed(2)}';
+    final newPrice = '\$${promocion.precioActualProm.toStringAsFixed(2)}';
+    final ahorro = '\$${promocion.ahorro.toStringAsFixed(2)}';
 
-    final antes = promocion.precioAnterior.toStringAsFixed(2);
-    final ahora = promocion.precioActualProm.toStringAsFixed(2);
-    final ahorro = promocion.ahorro.toStringAsFixed(2);
-    final descuento = _calcularDescuento(promocion);
-
-    final vigencia =
-        '${_formatDate(promocion.fechaInicio)} hasta ${_formatDate(promocion.fechaFin)}';
-
-    bytes.addAll(
-      generator.text(
-        'PROMOCION',
-        styles: const PosStyles(
-          align: PosAlign.center,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size2,
-        ),
-      ),
-    );
-
-    bytes.addAll(generator.feed(1));
-
-    bytes.addAll(
-      generator.text(
-        encabezado.toUpperCase(),
-        styles: const PosStyles(
-          align: PosAlign.center,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size2,
-        ),
-      ),
-    );
-
-    bytes.addAll(generator.feed(1));
-
-    bytes.addAll(
-      generator.text(
-        'NOMBRE:',
-        styles: const PosStyles(
-          align: PosAlign.left,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size1,
-        ),
-      ),
-    );
-
-    bytes.addAll(
-      generator.text(
-        nombre,
-        styles: const PosStyles(
-          align: PosAlign.left,
-          bold: true,
-          width: PosTextSize.size1,
-          height: PosTextSize.size1,
-        ),
-      ),
-    );
-
-    bytes.addAll(generator.feed(1));
-
-    bytes.addAll(
-      generator.text(
-        'ANTES:',
-        styles: const PosStyles(
-          align: PosAlign.left,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size1,
-        ),
-      ),
-    );
-
-    final oldPriceImage = await _buildStrikethroughPriceImage('\$$antes');
-
-    bytes.addAll(
-      generator.imageRaster(
-        oldPriceImage,
-        align: PosAlign.center,
-        highDensityHorizontal: true,
-        highDensityVertical: true,
-      ),
-    );
-
-    bytes.addAll(generator.feed(1));
-
-    bytes.addAll(
-      generator.text(
-        'AHORA',
-        styles: const PosStyles(
-          align: PosAlign.center,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size1,
-        ),
-      ),
-    );
-
-    bytes.addAll(
-      generator.text(
-        '\$$ahora',
-        styles: const PosStyles(
-          align: PosAlign.center,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size2,
-        ),
-      ),
-    );
-
-    bytes.addAll(generator.feed(1));
-
-    bytes.addAll(
-      generator.text(
-        'AHORRO:',
-        styles: const PosStyles(
-          align: PosAlign.left,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size1,
-        ),
-      ),
-    );
-
-    bytes.addAll(
-      generator.text(
-        '\$$ahorro',
-        styles: const PosStyles(align: PosAlign.left, bold: true),
-      ),
-    );
-
-    bytes.addAll(
-      generator.text(
-        'DESCUENTO:',
-        styles: const PosStyles(
-          align: PosAlign.left,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size1,
-        ),
-      ),
-    );
-
-    bytes.addAll(
-      generator.text(
-        descuento,
-        styles: const PosStyles(align: PosAlign.left, bold: true),
-      ),
-    );
-
-    bytes.addAll(
-      generator.text(
-        'VIGENCIA:',
-        styles: const PosStyles(
-          align: PosAlign.left,
-          bold: true,
-          width: PosTextSize.size2,
-          height: PosTextSize.size1,
-        ),
-      ),
-    );
-
-    bytes.addAll(
-      generator.text(
-        vigencia,
-        styles: const PosStyles(align: PosAlign.left, bold: true),
-      ),
-    );
-
-    if (promocion.mecanica?.isNotEmpty == true) {
-      bytes.addAll(generator.feed(1));
-
-      bytes.addAll(
-        generator.text(
-          'MECANICA:',
-          styles: const PosStyles(
-            align: PosAlign.left,
-            bold: true,
-            width: PosTextSize.size2,
-            height: PosTextSize.size1,
-          ),
-        ),
-      );
-
-      bytes.addAll(
-        generator.text(
-          _cleanText(promocion.mecanica!),
-          styles: const PosStyles(align: PosAlign.left, bold: true),
-        ),
-      );
+    String mecanicaStr = promocion.mecanica?.toUpperCase() ?? '';
+    if (mecanicaStr.isEmpty && promocion.precioAnterior > 0) {
+      final pct = ((promocion.ahorro / promocion.precioAnterior) * 100).round();
+      mecanicaStr = 'DESCUENTO ($pct%)';
+    } else if (mecanicaStr.isEmpty) {
+      mecanicaStr = 'PROMOCION';
     }
 
-    bytes.addAll(generator.feed(1));
+    final fInicio = _formatDate(promocion.fechaInicio);
+    final fFin = _formatDate(promocion.fechaFin);
+    final codigo = productPrice.codigoBarra.trim();
 
-    final smallQrImage = await _buildSmallQrImage(codigo);
+    double currentY = 20;
 
-    bytes.addAll(
-      generator.imageRaster(
-        smallQrImage,
-        align: PosAlign.center,
-        highDensityHorizontal: true,
-        highDensityVertical: true,
-      ),
+    // 1. Encabezado (GIGANTE - maxLines 2)
+    _drawText(
+      canvas,
+      encabezado.toUpperCase(),
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 55,
+      fontWeight: FontWeight.w900,
+      maxLines: 2,
+      textAlign: TextAlign.center,
+      height: 1.0,
+    );
+    currentY += 120; // Damos espacio para 2 líneas
+
+    // 2. Nombre del producto (GIGANTE - maxLines 3)
+    _drawText(
+      canvas,
+      nombre.toUpperCase(),
+      x: 10,
+      y: currentY,
+      width: width.toDouble() - 20,
+      fontSize: 40,
+      fontWeight: FontWeight.w900,
+      maxLines: 3,
+      textAlign: TextAlign.center,
+      height: 1.0,
+    );
+    currentY += 105; // Damos espacio para múltiples líneas
+
+    // 3. Título Precio Anterior
+    _drawText(
+      canvas,
+      'PRECIO ANTERIOR:',
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 20,
+      fontWeight: FontWeight.w700,
+      textAlign: TextAlign.center,
+    );
+    currentY += 25;
+
+    // 4. Valor Precio Anterior (Tachado y GIGANTE)
+    _drawText(
+      canvas,
+      oldPrice,
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 40,
+      fontWeight: FontWeight.w700,
+      textAlign: TextAlign.center,
+      strikethrough: true,
+    );
+    currentY += 50;
+
+    // 5. Precio Actual (SÚPER GIGANTE)
+    _drawText(
+      canvas,
+      newPrice,
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 95,
+      fontWeight: FontWeight.w900,
+      textAlign: TextAlign.center,
+    );
+    currentY += 105;
+
+    // 6. Título Ahorro
+    _drawText(
+      canvas,
+      'AHORRO:',
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 22,
+      fontWeight: FontWeight.w700,
+      textAlign: TextAlign.center,
+    );
+    currentY += 30;
+
+    // 7. Valor Ahorro (GIGANTE)
+    _drawText(
+      canvas,
+      ahorro,
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 44,
+      fontWeight: FontWeight.w900,
+      textAlign: TextAlign.center,
+    );
+    currentY += 55;
+
+    // 8. Título Mecánica
+    _drawText(
+      canvas,
+      'MECANICA:',
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 20,
+      fontWeight: FontWeight.w800,
+      textAlign: TextAlign.center,
+    );
+    currentY += 28;
+
+    // 9. Valor Mecánica (GIGANTE)
+    _drawText(
+      canvas,
+      mecanicaStr,
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 40,
+      fontWeight: FontWeight.w900,
+      textAlign: TextAlign.center,
+    );
+    currentY += 50;
+
+    // 10. Título Vigencia
+    _drawText(
+      canvas,
+      'VIGENCIA:',
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 18,
+      fontWeight: FontWeight.w800,
+      textAlign: TextAlign.center,
+    );
+    currentY += 25;
+
+    // 11. Valor Vigencia (GIGANTE)
+    _drawText(
+      canvas,
+      '$fInicio AL $fFin',
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 32,
+      fontWeight: FontWeight.w900,
+      textAlign: TextAlign.center,
+    );
+    currentY += 50;
+
+    // 12. QR Code
+    final qrData = codigo;
+    final qrSize = 130.0;
+    final qrX = (width - qrSize) / 2;
+    _drawQr(canvas, data: qrData, x: qrX, y: currentY, size: qrSize);
+    currentY += qrSize + 10;
+
+    // 13. Codigo de barra
+    _drawText(
+      canvas,
+      codigo,
+      x: 0,
+      y: currentY,
+      width: width.toDouble(),
+      fontSize: 28,
+      fontWeight: FontWeight.w900,
+      textAlign: TextAlign.center,
     );
 
-    bytes.addAll(
-      generator.text(
-        codigo,
-        styles: const PosStyles(align: PosAlign.center, bold: true),
-      ),
-    );
-
-    return bytes;
+    return _canvasToImage(recorder, width, height);
   }
 
+  // ==============================================================
+  // GENERADOR 2: ETIQUETA NORMAL (OPTIMIZADA)
+  // ==============================================================
   Future<img.Image> _buildNormalLabelImage(ProductPrice productPrice) async {
     const width = 384;
     const height = 213;
@@ -463,106 +422,61 @@ class BluetoothPrinterService {
     final codigo = productPrice.codigoBarra.trim();
     final precio = '\$${productPrice.precioConIva.toStringAsFixed(2)}';
 
+    // 🔥 QR Code (Solo con el código de barras numérico)
+    final qrData = codigo;
+
+    // NOMBRE DEL PRODUCTO
     _drawText(
       canvas,
-      nombre,
-      x: 12,
+      nombre.toUpperCase(),
+      x: 10,
       y: 10,
-      width: 360,
-      fontSize: 25,
+      width: 364,
+      fontSize: 30,
       fontWeight: FontWeight.w900,
       maxLines: 2,
-      height: 1.05,
+      height: 1.0,
     );
 
+    // TEXTO "PRECIO ESPECIAL"
     _drawText(
       canvas,
-      'Precio de especial',
-      x: 14,
-      y: 88,
-      width: 220,
-      fontSize: 21,
+      'PRECIO ESPECIAL',
+      x: 10,
+      y: 85,
+      width: 230,
+      fontSize: 25,
       fontWeight: FontWeight.w800,
       maxLines: 1,
     );
 
+    // PRECIO GIGANTE
     _drawText(
       canvas,
       precio,
-      x: 14,
-      y: 118,
-      width: 225,
-      fontSize: 44,
+      x: 10,
+      y: 115,
+      width: 240,
+      fontSize: 56,
       fontWeight: FontWeight.w900,
       maxLines: 1,
     );
 
-    _drawQr(canvas, data: codigo, x: 255, y: 68, size: 112);
+    // QR ubicado a la derecha
+    _drawQr(canvas, data: qrData, x: 260, y: 68, size: 112);
 
+    // CÓDIGO NUMÉRICO
     _drawText(
       canvas,
       codigo,
-      x: 235,
-      y: 194,
+      x: 245,
+      y: 190,
       width: 140,
-      fontSize: 15,
-      fontWeight: FontWeight.w700,
-      maxLines: 1,
-      textAlign: TextAlign.center,
-    );
-
-    return _canvasToImage(recorder, width, height);
-  }
-
-  Future<img.Image> _buildSmallQrImage(String codigo) async {
-    const width = 112;
-    const height = 112;
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-
-    _drawWhiteBackground(canvas, width, height);
-
-    final qrPainter = QrPainter(
-      data: codigo,
-      version: QrVersions.auto,
-      gapless: false,
-      color: Colors.black,
-      emptyColor: Colors.white,
-    );
-
-    qrPainter.paint(canvas, const Size(112, 112));
-
-    return _canvasToImage(recorder, width, height);
-  }
-
-  Future<img.Image> _buildStrikethroughPriceImage(String price) async {
-    const width = 384;
-    const height = 68;
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-
-    _drawWhiteBackground(canvas, width, height);
-
-    _drawText(
-      canvas,
-      price,
-      x: 0,
-      y: 0,
-      width: width.toDouble(),
-      fontSize: 42,
+      fontSize: 20,
       fontWeight: FontWeight.w900,
       maxLines: 1,
       textAlign: TextAlign.center,
     );
-
-    final paint = Paint()
-      ..color = Colors.black
-      ..strokeWidth = 5
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawLine(const Offset(5, 20), const Offset(100, 20), paint);
 
     return _canvasToImage(recorder, width, height);
   }
@@ -574,6 +488,7 @@ class BluetoothPrinterService {
     );
   }
 
+  // 🔥 QR OPTIMIZADO PARA IMPRESORAS TÉRMICAS (ANTI-BLOQUEO / ANTI-SANGRADO)
   void _drawQr(
     Canvas canvas, {
     required String data,
@@ -587,6 +502,9 @@ class BluetoothPrinterService {
     final qrPainter = QrPainter(
       data: data,
       version: QrVersions.auto,
+      // Nivel de corrección 'L' (Low) genera cuadros más grandes
+      errorCorrectionLevel: QrErrorCorrectLevel.L,
+      // 🔥 gapless en false evita que la impresora junte los bloques de tinta
       gapless: false,
       color: Colors.black,
       emptyColor: Colors.white,
@@ -596,6 +514,7 @@ class BluetoothPrinterService {
     canvas.restore();
   }
 
+  // Soporta alineación estricta y tachado (strikethrough)
   void _drawText(
     Canvas canvas,
     String text, {
@@ -607,6 +526,7 @@ class BluetoothPrinterService {
     int maxLines = 1,
     TextAlign textAlign = TextAlign.left,
     double height = 1.0,
+    bool strikethrough = false,
   }) {
     final painter = TextPainter(
       text: TextSpan(
@@ -616,6 +536,11 @@ class BluetoothPrinterService {
           fontSize: fontSize,
           fontWeight: fontWeight,
           height: height,
+          decoration: strikethrough
+              ? TextDecoration.lineThrough
+              : TextDecoration.none,
+          decorationThickness: strikethrough ? 2.5 : 0.0,
+          decorationColor: Colors.black,
         ),
       ),
       textAlign: textAlign,
@@ -624,7 +549,7 @@ class BluetoothPrinterService {
       ellipsis: '...',
     );
 
-    painter.layout(maxWidth: width);
+    painter.layout(minWidth: width, maxWidth: width);
     painter.paint(canvas, Offset(x, y));
   }
 
@@ -640,18 +565,8 @@ class BluetoothPrinterService {
   }
 
   String _formatDate(DateTime date) {
-    return '${date.day.toString().padLeft(2, '0')}/'
-        '${date.month.toString().padLeft(2, '0')}/'
-        '${date.year}';
-  }
-
-  String _calcularDescuento(Promocion promocion) {
-    if (promocion.precioAnterior <= 0) {
-      return promocion.mecanica ?? 'PROMOCION';
-    }
-
-    final porcentaje = (promocion.ahorro / promocion.precioAnterior) * 100;
-    return '${porcentaje.round()}%';
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(date.day)}/${two(date.month)}/${date.year}';
   }
 
   double _precioFinal(ProductPrice productPrice, Promocion? promocion) {

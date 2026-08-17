@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/pedidos_service.dart';
 import 'admin_pedido_detalle_screen.dart';
 import '../widgets/generar_pedido_proveedor_dialog.dart';
+import '../widgets/generar_pedido_consolidado_dialog.dart';
 
 class AdminPedidosScreen extends StatefulWidget {
   const AdminPedidosScreen({super.key});
@@ -18,13 +19,17 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
   bool isLoading = true;
   String? errorMessage;
 
-  // Lista original con todos los datos
-  List<dynamic> pedidos = [];
-  // Lista que se mostrará en pantalla según los filtros
-  List<dynamic> pedidosFiltrados = [];
+  // MODO DE VISTA: 0 = Órdenes de pedido (clásico), 1 = Por proveedores (consolidado)
+  int _modoVista = 0;
 
-  // Mapa para almacenar el progreso cargado desde la caché
+  // === DATOS PARA LA VISTA CLÁSICA ===
+  List<dynamic> pedidos = [];
+  List<dynamic> pedidosFiltrados = [];
   Map<int, Map<String, int>> progresos = {};
+
+  // === DATOS PARA LA VISTA CONSOLIDADA ===
+  List<dynamic> borradoresConsolidados = [];
+  List<dynamic> borradoresFiltrados = [];
 
   // Controladores para los filtros
   final TextEditingController searchController = TextEditingController();
@@ -33,7 +38,7 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
   @override
   void initState() {
     super.initState();
-    cargarPedidos();
+    cargarDatos();
   }
 
   @override
@@ -42,37 +47,21 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
     super.dispose();
   }
 
-  Future<void> cargarPedidos() async {
+  Future<void> cargarDatos() async {
     setState(() {
       isLoading = true;
       errorMessage = null;
     });
 
     try {
-      final data = await service.listarPedidosAdmin();
-
-      // Cargamos los progresos desde SharedPreferences para toda la lista
-      final prefs = await SharedPreferences.getInstance();
-      Map<int, Map<String, int>> nuevosProgresos = {};
-
-      for (var p in data) {
-        int id = int.tryParse(p["id"].toString()) ?? 0;
-        int total = prefs.getInt('pedido_${id}_total') ?? 0;
-        List<String> sent = prefs.getStringList('pedido_${id}_sent') ?? [];
-        nuevosProgresos[id] = {'total': total, 'sent': sent.length};
+      if (_modoVista == 0) {
+        await _cargarVistaClasica();
+      } else {
+        await _cargarVistaConsolidada();
       }
-
-      setState(() {
-        pedidos = data;
-        pedidosFiltrados = data; // Al inicio, mostramos todos
-        progresos = nuevosProgresos;
-      });
-
-      // Re-aplicar el filtro por si el usuario recarga mientras busca
-      filtrarPedidos();
     } catch (e) {
       setState(() {
-        errorMessage = "No se pudieron cargar los pedidos";
+        errorMessage = "No se pudieron cargar los datos";
       });
     } finally {
       setState(() {
@@ -81,13 +70,44 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
     }
   }
 
-  // Función maestra que aplica tanto la búsqueda de texto como el filtro de fecha
+  Future<void> _cargarVistaClasica() async {
+    final data = await service.listarPedidosAdmin();
+
+    final prefs = await SharedPreferences.getInstance();
+    Map<int, Map<String, int>> nuevosProgresos = {};
+
+    for (var p in data) {
+      int id = int.tryParse(p["id"].toString()) ?? 0;
+      int total = prefs.getInt('pedido_${id}_total') ?? 0;
+      List<String> sent = prefs.getStringList('pedido_${id}_sent') ?? [];
+      nuevosProgresos[id] = {'total': total, 'sent': sent.length};
+    }
+
+    setState(() {
+      pedidos = data;
+      pedidosFiltrados = data;
+      progresos = nuevosProgresos;
+    });
+
+    filtrarPedidos();
+  }
+
+  Future<void> _cargarVistaConsolidada() async {
+    final data = await service.listarBorradoresAgrupadosPorProveedor();
+
+    setState(() {
+      borradoresConsolidados = data;
+      borradoresFiltrados = data;
+    });
+
+    filtrarBorradores();
+  }
+
   void filtrarPedidos() {
     final query = searchController.text.toLowerCase();
 
     setState(() {
       pedidosFiltrados = pedidos.where((pedido) {
-        // 1. Extraer todos los campos para la búsqueda por texto
         final id = pedido['id']?.toString().toLowerCase() ?? '';
         final usuario = pedido['usuario']?.toString().toLowerCase() ?? '';
         final estado = pedido['estado']?.toString().toLowerCase() ?? '';
@@ -98,7 +118,6 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
         final proveedores =
             pedido['proveedores']?.toString().toLowerCase() ?? 'varios';
 
-        // 2. Verificar si el texto coincide con ALGUNO de los campos
         final coincideTexto =
             id.contains(query) ||
             usuario.contains(query) ||
@@ -107,7 +126,6 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
             fechaStrFormateada.contains(query) ||
             proveedores.contains(query);
 
-        // 3. Verificar el filtro de fecha (si hay uno seleccionado)
         bool coincideFecha = true;
         if (fechaFiltro != null) {
           final fechaOriginal = pedido['fecha_creacion']?.toString() ?? '';
@@ -126,8 +144,27 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
           }
         }
 
-        // El pedido se muestra solo si cumple con ambos filtros
         return coincideTexto && coincideFecha;
+      }).toList();
+    });
+  }
+
+  void filtrarBorradores() {
+    final query = searchController.text.toLowerCase();
+
+    setState(() {
+      borradoresFiltrados = borradoresConsolidados.where((provData) {
+        final proveedor = provData['proveedor']?.toString().toLowerCase() ?? '';
+        final items = provData['total_items']?.toString().toLowerCase() ?? '';
+        final cantidadTotal =
+            provData['cantidad_total']?.toString().toLowerCase() ?? '';
+
+        final coincideTexto =
+            proveedor.contains(query) ||
+            items.contains(query) ||
+            cantidadTotal.contains(query);
+
+        return coincideTexto;
       }).toList();
     });
   }
@@ -156,29 +193,62 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
       appBar: AppBar(
         title: const Text("Administrar pedidos"),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: cargarPedidos),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: cargarDatos),
         ],
       ),
       body: Column(
         children: [
-          // 🔥 SECCIÓN DE FILTROS AÑADIDA
           Container(
             padding: const EdgeInsets.all(12.0),
             color: Colors.white,
             child: Column(
               children: [
-                // Buscador de texto (Todos los campos)
+                // 🔥 SOLUCIÓN DEL OVERFLOW: SingleChildScrollView horizontal
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      ChoiceChip(
+                        label: const Text("Órdenes de pedido"),
+                        selected: _modoVista == 0,
+                        onSelected: (selected) {
+                          if (selected && _modoVista != 0) {
+                            setState(() => _modoVista = 0);
+                            cargarDatos();
+                          }
+                        },
+                      ),
+                      const SizedBox(width: 10),
+                      ChoiceChip(
+                        label: const Text("Por proveedores (Borrador)"),
+                        selected: _modoVista == 1,
+                        onSelected: (selected) {
+                          if (selected && _modoVista != 1) {
+                            setState(() => _modoVista = 1);
+                            cargarDatos();
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+
                 TextField(
                   controller: searchController,
                   decoration: InputDecoration(
-                    hintText: "Buscar por N°, usuario, proveedor...",
+                    hintText: _modoVista == 0
+                        ? "Buscar por N°, usuario, proveedor..."
+                        : "Buscar proveedor...",
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: searchController.text.isNotEmpty
                         ? IconButton(
                             icon: const Icon(Icons.clear),
                             onPressed: () {
                               searchController.clear();
-                              filtrarPedidos();
+                              _modoVista == 0
+                                  ? filtrarPedidos()
+                                  : filtrarBorradores();
                             },
                           )
                         : null,
@@ -187,225 +257,330 @@ class _AdminPedidosScreenState extends State<AdminPedidosScreen> {
                     ),
                     contentPadding: const EdgeInsets.symmetric(vertical: 0),
                   ),
-                  onChanged: (value) => filtrarPedidos(),
+                  onChanged: (value) =>
+                      _modoVista == 0 ? filtrarPedidos() : filtrarBorradores(),
                 ),
-                const SizedBox(height: 10),
-                // Selector de Fecha
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30.0),
+
+                if (_modoVista == 0) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30.0),
+                            ),
                           ),
+                          icon: const Icon(Icons.calendar_today, size: 18),
+                          label: Text(
+                            fechaFiltro == null
+                                ? "Filtrar por fecha"
+                                : "Fecha: ${fechaFiltro!.day.toString().padLeft(2, '0')}/${fechaFiltro!.month.toString().padLeft(2, '0')}/${fechaFiltro!.year}",
+                          ),
+                          onPressed: () async {
+                            final DateTime? picked = await showDatePicker(
+                              context: context,
+                              initialDate: fechaFiltro ?? DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2100),
+                            );
+                            if (picked != null) {
+                              setState(() {
+                                fechaFiltro = picked;
+                              });
+                              filtrarPedidos();
+                            }
+                          },
                         ),
-                        icon: const Icon(Icons.calendar_today, size: 18),
-                        label: Text(
-                          fechaFiltro == null
-                              ? "Filtrar por fecha"
-                              : "Fecha: ${fechaFiltro!.day.toString().padLeft(2, '0')}/${fechaFiltro!.month.toString().padLeft(2, '0')}/${fechaFiltro!.year}",
-                        ),
-                        onPressed: () async {
-                          final DateTime? picked = await showDatePicker(
-                            context: context,
-                            initialDate: fechaFiltro ?? DateTime.now(),
-                            firstDate: DateTime(2020),
-                            lastDate: DateTime(2100),
-                          );
-                          if (picked != null) {
+                      ),
+                      if (fechaFiltro != null) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.red),
+                          tooltip: "Borrar fecha",
+                          onPressed: () {
                             setState(() {
-                              fechaFiltro = picked;
+                              fechaFiltro = null;
                             });
                             filtrarPedidos();
-                          }
-                        },
-                      ),
-                    ),
-                    if (fechaFiltro != null) ...[
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.red),
-                        tooltip: "Borrar fecha",
-                        onPressed: () {
-                          setState(() {
-                            fechaFiltro = null;
-                          });
-                          filtrarPedidos();
-                        },
-                      ),
+                          },
+                        ),
+                      ],
                     ],
-                  ],
-                ),
+                  ),
+                ],
               ],
             ),
           ),
 
-          // 🔥 LISTA DE PEDIDOS (Usando pedidosFiltrados)
           Expanded(
             child: isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : errorMessage != null
                 ? Center(child: Text(errorMessage!))
-                : pedidosFiltrados.isEmpty
-                ? const Center(child: Text("No se encontraron pedidos"))
-                : ListView.builder(
-                    itemCount: pedidosFiltrados.length,
-                    itemBuilder: (context, index) {
-                      final pedido = pedidosFiltrados[index];
-                      final estado =
-                          pedido["estado"]?.toString() ?? "SIN ESTADO";
-                      final pedidoId =
-                          int.tryParse(pedido["id"].toString()) ?? 0;
-
-                      // Lógica de lectura de progreso
-                      final prog = progresos[pedidoId];
-                      final totalProv = prog != null ? prog['total'] ?? 0 : 0;
-                      final sentProv = prog != null ? prog['sent'] ?? 0 : 0;
-                      final double progressValue = totalProv == 0
-                          ? 0.0
-                          : sentProv / totalProv;
-
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        child: InkWell(
-                          onTap: () {
-                            showDialog(
-                              context: context,
-                              barrierDismissible: false,
-                              builder: (_) => GenerarPedidoProveedorDialog(
-                                pedidoId: pedidoId,
-                              ),
-                            ).then((_) {
-                              cargarPedidos();
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                CircleAvatar(
-                                  backgroundColor: colorEstado(estado),
-                                  child: const Icon(
-                                    Icons.assignment,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        "Orden de pedido #$pedidoId",
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        "Usuario: ${pedido["usuario"] ?? ""}",
-                                      ),
-                                      Text("Estado: $estado"),
-                                      Text(
-                                        "Items: ${pedido["total_items"] ?? 0}",
-                                      ),
-                                      Text(
-                                        "Fecha: ${formatearFecha(pedido["fecha_creacion"])}",
-                                      ),
-                                      Text(
-                                        "Proveedores: ${pedido["proveedores"] ?? 'Varios'}",
-                                        style: const TextStyle(
-                                          fontStyle: FontStyle.italic,
-                                          color: Colors.blueGrey,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-
-                                      // BARRA DE PROGRESO
-                                      if (estado == "BORRADOR" &&
-                                          totalProv > 0) ...[
-                                        const SizedBox(height: 8),
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              "Progreso envíos:",
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey.shade600,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                            Text(
-                                              "$sentProv/$totalProv provs.",
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.green.shade700,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 4),
-                                        LinearProgressIndicator(
-                                          value: progressValue,
-                                          backgroundColor: Colors.grey.shade300,
-                                          color: Colors.green,
-                                          minHeight: 6,
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.edit,
-                                        color: Colors.blueGrey,
-                                      ),
-                                      tooltip: "Editar Pedido",
-                                      onPressed: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                AdminPedidoDetalleScreen(
-                                                  pedidoId: pedidoId,
-                                                ),
-                                          ),
-                                        ).then((_) => cargarPedidos());
-                                      },
-                                    ),
-                                    const Icon(
-                                      Icons.arrow_forward_ios,
-                                      size: 16,
-                                      color: Colors.grey,
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+                : _modoVista == 0
+                ? _buildListaClasica()
+                : _buildListaConsolidada(),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildListaClasica() {
+    if (pedidosFiltrados.isEmpty) {
+      return const Center(child: Text("No se encontraron pedidos"));
+    }
+
+    return ListView.builder(
+      itemCount: pedidosFiltrados.length,
+      itemBuilder: (context, index) {
+        final pedido = pedidosFiltrados[index];
+        final estado = pedido["estado"]?.toString() ?? "SIN ESTADO";
+        final pedidoId = int.tryParse(pedido["id"].toString()) ?? 0;
+
+        final prog = progresos[pedidoId];
+        final totalProv = prog != null ? prog['total'] ?? 0 : 0;
+        final sentProv = prog != null ? prog['sent'] ?? 0 : 0;
+        final double progressValue = totalProv == 0
+            ? 0.0
+            : sentProv / totalProv;
+
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: InkWell(
+            onTap: () {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) =>
+                    GenerarPedidoProveedorDialog(pedidoId: pedidoId),
+              ).then((_) => cargarDatos());
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    backgroundColor: colorEstado(estado),
+                    child: const Icon(Icons.assignment, color: Colors.white),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Orden de pedido #$pedidoId",
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text("Usuario: ${pedido["usuario"] ?? ""}"),
+                        Text("Estado: $estado"),
+                        Text("Items: ${pedido["total_items"] ?? 0}"),
+                        Text(
+                          "Fecha: ${formatearFecha(pedido["fecha_creacion"])}",
+                        ),
+                        Text(
+                          "Proveedores: ${pedido["proveedores"] ?? 'Varios'}",
+                          style: const TextStyle(
+                            fontStyle: FontStyle.italic,
+                            color: Colors.blueGrey,
+                            fontSize: 13,
+                          ),
+                        ),
+                        if (estado == "BORRADOR" && totalProv > 0) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                "Progreso envíos:",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                "$sentProv/$totalProv provs.",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.green.shade700,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          LinearProgressIndicator(
+                            value: progressValue,
+                            backgroundColor: Colors.grey.shade300,
+                            color: Colors.green,
+                            minHeight: 6,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit, color: Colors.blueGrey),
+                        tooltip: "Editar Pedido",
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  AdminPedidoDetalleScreen(pedidoId: pedidoId),
+                            ),
+                          ).then((_) => cargarDatos());
+                        },
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_ios,
+                        size: 16,
+                        color: Colors.grey,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildListaConsolidada() {
+    if (borradoresFiltrados.isEmpty) {
+      return const Center(
+        child: Text("No se encontraron consolidaciones en BORRADOR"),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: borradoresFiltrados.length,
+      itemBuilder: (context, index) {
+        final provData = borradoresFiltrados[index];
+        final proveedor = provData["proveedor"]?.toString() ?? "Desconocido";
+        final totalItems =
+            int.tryParse(provData["total_items"]?.toString() ?? "0") ?? 0;
+        final cantidadTotal =
+            double.tryParse(provData["cantidad_total"]?.toString() ?? "0") ??
+            0.0;
+        final cantOrdenes =
+            int.tryParse(provData["cantidad_ordenes"]?.toString() ?? "0") ?? 0;
+
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: InkWell(
+            onTap: () {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) =>
+                    GenerarPedidoConsolidadoDialog(proveedor: proveedor),
+              ).then((_) => cargarDatos());
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  CircleAvatar(
+                    radius: 26,
+                    backgroundColor: Colors.indigo.shade50,
+                    child: Icon(
+                      Icons.domain,
+                      color: Colors.indigo.shade700,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          proveedor,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.indigo.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.format_list_numbered,
+                              size: 14,
+                              color: Colors.grey,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              "Items únicos: $totalItems",
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.production_quantity_limits,
+                              size: 14,
+                              color: Colors.grey,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              "Cantidad a pedir: ${cantidadTotal.toStringAsFixed(0)}",
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.file_copy,
+                              size: 14,
+                              color: Colors.grey,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              "Extraído de $cantOrdenes orden(es)",
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.arrow_forward_ios,
+                    size: 16,
+                    color: Colors.grey,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

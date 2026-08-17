@@ -18,6 +18,7 @@ class UsuariosService {
     required String nombreUsuario,
     required String password,
     required String nombreCompleto,
+    String? celular, // 🔥 NUEVO CAMPO
     required String rol,
     required bool activo,
   }) async {
@@ -27,6 +28,7 @@ class UsuariosService {
         'nombre_usuario': nombreUsuario,
         'password': password,
         'nombre_completo': nombreCompleto,
+        'celular': celular, // 🔥 NUEVO CAMPO
         'rol': rol,
         'activo': activo,
       },
@@ -39,6 +41,7 @@ class UsuariosService {
     required int id,
     required String nombreUsuario,
     required String nombreCompleto,
+    String? celular, // 🔥 NUEVO CAMPO
     required String rol,
     required bool activo,
   }) async {
@@ -47,6 +50,7 @@ class UsuariosService {
       body: {
         'nombre_usuario': nombreUsuario,
         'nombre_completo': nombreCompleto,
+        'celular': celular, // 🔥 NUEVO CAMPO
         'rol': rol,
         'activo': activo,
       },
@@ -61,9 +65,7 @@ class UsuariosService {
   }) async {
     final response = await _apiClient.patch(
       '/api/usuarios/$id/password',
-      body: {
-        'password': password,
-      },
+      body: {'password': password},
     );
 
     return Usuario.fromJson(response['data'] as Map<String, dynamic>);

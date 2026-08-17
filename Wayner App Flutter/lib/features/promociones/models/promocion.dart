@@ -14,6 +14,9 @@ class Promocion {
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
+  // 🔥 1. AGREGA LA VARIABLE AQUÍ
+  final String estado;
+
   Promocion({
     required this.id,
     required this.codigoBarra,
@@ -29,6 +32,8 @@ class Promocion {
     required this.activa,
     this.createdAt,
     this.updatedAt,
+    // 🔥 2. VALOR POR DEFECTO EN EL CONSTRUCTOR
+    this.estado = 'PENDIENTE',
   });
 
   factory Promocion.fromJson(Map<String, dynamic> json) {
@@ -57,6 +62,9 @@ class Promocion {
       updatedAt: json['updated_at'] == null
           ? null
           : DateTime.tryParse(json['updated_at'].toString()),
+
+      // 🔥 3. MAPEADO DESDE EL JSON (Si viene nulo, asume 'PENDIENTE')
+      estado: json['estado']?.toString() ?? 'PENDIENTE',
     );
   }
 }

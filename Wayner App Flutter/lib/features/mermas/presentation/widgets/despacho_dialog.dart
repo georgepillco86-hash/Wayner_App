@@ -79,7 +79,7 @@ class _DespachoDialogState extends State<DespachoDialog> {
 
       // Petición al backend
       final url = Uri.parse(
-        'http://localhost:5000/api/mermas/${widget.merma.id}/despacho',
+        'http://192.168.2.79:5000/api/mermas/${widget.merma.id}/despacho',
       );
       final response = await http.post(
         url,

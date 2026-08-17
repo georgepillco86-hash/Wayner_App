@@ -5,7 +5,7 @@ import '../models/merma_historial_model.dart';
 import '../../../../core/storage/session_storage.dart';
 
 class MermaService {
-  final String baseUrl = 'http://localhost:5000/api/mermas';
+  final String baseUrl = 'http://192.168.2.79:5000/api/mermas';
 
   Future<Map<String, String>> _getHeaders() async {
     final user = await SessionStorage.getUser();
@@ -51,6 +51,30 @@ class MermaService {
       body: jsonEncode(merma.toJson()),
     );
     return response.statusCode == 200;
+  }
+
+  // =========================================================
+  // 🔥 NUEVO MÉTODO: Crear múltiples mermas en lote 🔥
+  // =========================================================
+  Future<bool> crearMermasEnLote(List<Merma> mermas) async {
+    final payload = mermas.map((m) => m.toJson()).toList();
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/lote'),
+      headers: await _getHeaders(),
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return true;
+    }
+
+    try {
+      final error = jsonDecode(response.body);
+      throw Exception(error['detail'] ?? 'Error al guardar las mermas');
+    } catch (e) {
+      throw Exception('Error de servidor: ${response.statusCode}');
+    }
   }
 
   Future<bool> actualizarMerma(int id, Map<String, dynamic> datos) async {
@@ -132,6 +156,24 @@ class MermaService {
         if (data['success'] == true) {
           final List<dynamic> costos = data['data'];
           return costos.map((e) => double.parse(e.toString())).toList();
+        }
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<List<String>> obtenerProveedoresConMermasPendientes() async {
+    try {
+      final uri = Uri.parse('$baseUrl/proveedores-pendientes');
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          final List<dynamic> provs = data['data'];
+          // Convertimos a mayúsculas para asegurar que el cruce de nombres sea exacto
+          return provs.map((e) => e.toString().toUpperCase().trim()).toList();
         }
       }
       return [];

@@ -638,4 +638,38 @@ class PedidosService {
       return false;
     }
   }
+
+  // =========================================================================
+  // 🔥 NUEVAS RUTAS PARA LA VISTA CONSOLIDADA "POR PROVEEDORES" 🔥
+  // =========================================================================
+
+  Future<List<dynamic>> listarBorradoresAgrupadosPorProveedor() async {
+    final response = await http.get(
+      Uri.parse("$baseUrl/borradores/agrupados-por-proveedor"),
+      headers: await AuthHeaders.plain(),
+    );
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
+      return json["data"] ?? [];
+    }
+
+    throw Exception("Error al obtener borradores agrupados por proveedor");
+  }
+
+  Future<Map<String, dynamic>> obtenerDetalleBorradoresProveedor(
+    String proveedor,
+  ) async {
+    final uri = Uri.parse(
+      "$baseUrl/borradores/proveedor-detalle",
+    ).replace(queryParameters: {"proveedor": proveedor});
+    final response = await http.get(uri, headers: await AuthHeaders.plain());
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
+      return json["data"] ?? {};
+    }
+
+    throw Exception("Error al obtener detalle consolidado del proveedor");
+  }
 }

@@ -12,7 +12,7 @@ class PromocionService {
 
     return ProductPrice.fromJson(response['data'] as Map<String, dynamic>);
   }
-  
+
   Future<List<Promocion>> listar({
     String? texto,
     String? codigoBarra,
@@ -23,16 +23,12 @@ class PromocionService {
     final response = await _apiClient.get(
       '/api/promociones',
       queryParameters: {
-        if (texto != null && texto.trim().isNotEmpty)
-          'texto': texto.trim(),
+        if (texto != null && texto.trim().isNotEmpty) 'texto': texto.trim(),
         if (codigoBarra != null && codigoBarra.trim().isNotEmpty)
           'codigo_barra': codigoBarra.trim(),
-        if (estado != null && estado != 'TODAS')
-          'estado': estado,
-        if (fechaDesde != null)
-          'fecha_desde': _formatDate(fechaDesde),
-        if (fechaHasta != null)
-          'fecha_hasta': _formatDate(fechaHasta),
+        if (estado != null && estado != 'TODAS') 'estado': estado,
+        if (fechaDesde != null) 'fecha_desde': _formatDate(fechaDesde),
+        if (fechaHasta != null) 'fecha_hasta': _formatDate(fechaHasta),
       },
     );
 
@@ -101,9 +97,15 @@ class PromocionService {
   }
 
   Future<Promocion> desactivar(int id) async {
-    final response = await _apiClient.delete('/api/promociones/$id');
+    // Ajustado a PATCH para diferenciarlo de la eliminación real
+    final response = await _apiClient.patch('/api/promociones/$id/desactivar');
 
     return Promocion.fromJson(response['data'] as Map<String, dynamic>);
+  }
+
+  // 🔥 NUEVO: Método para eliminar la promoción permanentemente
+  Future<void> eliminar(int id) async {
+    await _apiClient.delete('/api/promociones/$id');
   }
 
   String _formatDate(DateTime date) {

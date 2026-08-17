@@ -149,17 +149,12 @@ class _UsuariosAdminScreenState extends State<UsuariosAdminScreen> {
 
     if (_errorMessage != null) {
       return Center(
-        child: Text(
-          _errorMessage!,
-          style: const TextStyle(color: Colors.red),
-        ),
+        child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
       );
     }
 
     if (_usuarios.isEmpty) {
-      return const Center(
-        child: Text('No existen usuarios registrados'),
-      );
+      return const Center(child: Text('No existen usuarios registrados'));
     }
 
     return RefreshIndicator(
@@ -170,21 +165,25 @@ class _UsuariosAdminScreenState extends State<UsuariosAdminScreen> {
         itemBuilder: (context, index) {
           final usuario = _usuarios[index];
 
+          // 🔥 NUEVO: Mostramos el celular en la tarjeta si existe
+          final celularTexto =
+              (usuario.celular != null && usuario.celular!.isNotEmpty)
+              ? ' | Cel: ${usuario.celular}'
+              : '';
+
           return Card(
             elevation: 2,
             margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
               leading: CircleAvatar(
-                child: Icon(
-                  usuario.activo ? Icons.person : Icons.person_off,
-                ),
+                child: Icon(usuario.activo ? Icons.person : Icons.person_off),
               ),
               title: Text(
                 usuario.nombreUsuario,
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               subtitle: Text(
-                '${usuario.nombreCompleto ?? 'Sin nombre'}\nRol: ${usuario.rol} | Estado: ${usuario.activo ? 'Activo' : 'Inactivo'}',
+                '${usuario.nombreCompleto ?? 'Sin nombre'}$celularTexto\nRol: ${usuario.rol} | Estado: ${usuario.activo ? 'Activo' : 'Inactivo'}',
               ),
               isThreeLine: true,
               trailing: PopupMenuButton<String>(
@@ -236,6 +235,8 @@ class _UsuarioFormDialogState extends State<_UsuarioFormDialog> {
   final _nombreUsuarioController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nombreCompletoController = TextEditingController();
+  final _celularController =
+      TextEditingController(); // 🔥 NUEVO: Controlador para celular
 
   bool _activo = true;
   bool _isSaving = false;
@@ -252,6 +253,8 @@ class _UsuarioFormDialogState extends State<_UsuarioFormDialog> {
     if (usuario != null) {
       _nombreUsuarioController.text = usuario.nombreUsuario;
       _nombreCompletoController.text = usuario.nombreCompleto ?? '';
+      _celularController.text =
+          usuario.celular ?? ''; // 🔥 NUEVO: Cargar celular
       _rol = usuario.rol;
       _activo = usuario.activo;
     }
@@ -265,11 +268,15 @@ class _UsuarioFormDialogState extends State<_UsuarioFormDialog> {
     });
 
     try {
+      final celularIngresado = _celularController.text.trim();
+      final celularFinal = celularIngresado.isEmpty ? null : celularIngresado;
+
       if (_isEditing) {
         await _usuariosService.actualizarUsuario(
           id: widget.usuario!.id,
           nombreUsuario: _nombreUsuarioController.text.trim(),
           nombreCompleto: _nombreCompletoController.text.trim(),
+          celular: celularFinal, // 🔥 NUEVO: Pasamos el celular al servicio
           rol: _rol,
           activo: _activo,
         );
@@ -278,6 +285,7 @@ class _UsuarioFormDialogState extends State<_UsuarioFormDialog> {
           nombreUsuario: _nombreUsuarioController.text.trim(),
           password: _passwordController.text.trim(),
           nombreCompleto: _nombreCompletoController.text.trim(),
+          celular: celularFinal, // 🔥 NUEVO: Pasamos el celular al servicio
           rol: _rol,
           activo: _activo,
         );
@@ -306,6 +314,7 @@ class _UsuarioFormDialogState extends State<_UsuarioFormDialog> {
     _nombreUsuarioController.dispose();
     _passwordController.dispose();
     _nombreCompletoController.dispose();
+    _celularController.dispose(); // 🔥 NUEVO: Liberar memoria
     super.dispose();
   }
 
@@ -366,8 +375,30 @@ class _UsuarioFormDialogState extends State<_UsuarioFormDialog> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                // 🔥 NUEVO: Campo para el celular
+                TextFormField(
+                  controller: _celularController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: 'Celular',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.phone_android),
+                  ),
+                  validator: (value) {
+                    if (value != null && value.trim().isNotEmpty) {
+                      final cel = value.replaceAll(' ', '').replaceAll('-', '');
+                      if (cel.length != 10 || int.tryParse(cel) == null) {
+                        return 'Debe tener exactamente 10 números';
+                      }
+                    }
+                    return null; // Es opcional, así que si está vacío no marca error
+                  },
+                ),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   value: _rol,
+                  isExpanded:
+                      true, // 🔥 CORRECCIÓN: Esto soluciona el "Right overflowed"
                   decoration: const InputDecoration(
                     labelText: 'Rol',
                     border: OutlineInputBorder(),

@@ -18,6 +18,8 @@ import '../../../logs/screens/audit_logs_screen.dart';
 import '../../../promociones/screens/promociones_screen.dart';
 // --- NUEVO IMPORT DE MERMA ---
 import '../../../mermas/presentation/screens/merma_screen.dart';
+// --- 🔥 NUEVO IMPORT DE CONVERSIONES 🔥 ---
+import '../../../conversiones/screens/conversiones_screen.dart';
 ////// CRONOGRAMA ////////////
 import '../../../cronograma/presentation/screens/calendario_screen.dart';
 import '../../../cronograma/presentation/screens/notificaciones_screen.dart';
@@ -282,6 +284,17 @@ class _ProductSearchScreenState extends State<ProductSearchScreen> {
                       );
                     },
                   ),
+
+                  // 🔥 NUEVO: MÓDULO DE CONVERSIONES (Visible para todos menos ESCANER) 🔥
+                  if (rolUsuario != 'ESCANER')
+                    buildMenuItem(
+                      icon: Icons.transform,
+                      title: "Conversiones",
+                      onTap: () {
+                        abrirPantalla(const ConversionesScreen());
+                      },
+                    ),
+
                   if (esAdmin) ...[
                     const Divider(),
                     buildMenuItem(

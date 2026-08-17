@@ -7,11 +7,12 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/pedidos_service.dart';
-
-// ⚠️ ASEGÚRATE DE IMPORTAR TU KARDEX AQUÍ
-// import '../widgets/kardex_flotante_dialog.dart';
+import 'package:ferrotienda_flutter_proyecto/features/mermas/data/services/merma_service.dart';
+import 'package:ferrotienda_flutter_proyecto/features/mermas/presentation/screens/merma_screen.dart';
+import '../../../core/storage/session_storage.dart';
 
 class GenerarPedidoProveedorDialog extends StatefulWidget {
   final int pedidoId;
@@ -27,6 +28,9 @@ class _GenerarPedidoProveedorDialogState
     extends State<GenerarPedidoProveedorDialog> {
   final PedidosService service = PedidosService();
   late final SaldosApiService saldosService;
+
+  final MermaService _mermaService = MermaService();
+  Set<String> proveedoresConMermas = {};
 
   bool isLoading = true;
   String? errorMessage;
@@ -142,6 +146,15 @@ class _GenerarPedidoProveedorDialogState
     return "001-$b2Str-$corrStr";
   }
 
+  Future<void> _cargarProveedoresConMermas() async {
+    try {
+      final provs = await _mermaService.obtenerProveedoresConMermasPendientes();
+      proveedoresConMermas = provs.toSet();
+    } catch (e) {
+      debugPrint("Error cargando mermas: $e");
+    }
+  }
+
   Future<void> _cargarTodo() async {
     setState(() {
       isLoading = true;
@@ -173,6 +186,7 @@ class _GenerarPedidoProveedorDialogState
         _cargarCostosGlobales(),
         _cargarHistorialCostos(),
         _cargarStockYMinimoEnVivo(),
+        _cargarProveedoresConMermas(),
       ]);
     } catch (e) {
       errorMessage = "Error al cargar la información del pedido.";
@@ -908,7 +922,6 @@ class _GenerarPedidoProveedorDialogState
     }).toList();
   }
 
-  // 🔥 LÓGICA MATEMÁTICA CORREGIDA PARA WHATSAPP
   String _construirTextoComoPDF(String proveedor, List<dynamic> items) {
     double totalConIvaAcumulado = 0.0;
     double subtotal0 = 0.0;
@@ -965,7 +978,6 @@ class _GenerarPedidoProveedorDialogState
 
       totalDescuentos += (descUnitario * cant);
 
-      // Si el producto tiene IVA, sumamos su total (que YA TIENE IVA) al acumulador
       if (tieneIva) {
         totalConIvaAcumulado += subtotalItem;
       } else {
@@ -981,13 +993,8 @@ class _GenerarPedidoProveedorDialogState
       txt += "   Total: \$${subtotalItem.toStringAsFixed(2)}\n\n";
     }
 
-    // 🔥 DESENGLOSAMOS EL IVA (Asumiendo 15%)
-    // Dividimos para 1.15 para sacar la base real sin impuestos
     final base15 = totalConIvaAcumulado / 1.15;
-    // La diferencia entre el total con IVA y la base es el valor exacto del impuesto
     final totalIva = totalConIvaAcumulado - base15;
-
-    // El total a pagar es la suma de los productos 0% y los del 15% (que ya incluyen su propio IVA en la variable)
     final totalNeto = totalConIvaAcumulado + subtotal0;
 
     txt += "----------------------------------------\n";
@@ -1002,7 +1009,6 @@ class _GenerarPedidoProveedorDialogState
     return txt;
   }
 
-  // 🔥 LÓGICA MATEMÁTICA CORREGIDA PARA PDF
   Future<void> _compartirUnificado(
     String proveedor,
     List<dynamic> items,
@@ -1074,7 +1080,6 @@ class _GenerarPedidoProveedorDialogState
       ];
     }).toList();
 
-    // 🔥 DESENGLOSE PARA EL PDF
     final base15 = totalConIvaAcumulado / 1.15;
     final totalIva = totalConIvaAcumulado - base15;
     final totalNeto = totalConIvaAcumulado + subtotal0;
@@ -1408,6 +1413,9 @@ class _GenerarPedidoProveedorDialogState
       );
     }
 
+    final nombreColaborador = pedido?["usuario"]?.toString() ?? "Colaborador";
+    final celularColaborador = pedido?["celular_usuario"]?.toString() ?? "";
+
     return ListView.builder(
       itemCount: proveedoresDisponibles.length,
       itemBuilder: (context, index) {
@@ -1477,6 +1485,62 @@ class _GenerarPedidoProveedorDialogState
                     ),
                   ],
                 ),
+
+                if (proveedoresConMermas.contains(
+                  prov.toUpperCase().trim(),
+                )) ...[
+                  const SizedBox(height: 8),
+                  InkWell(
+                    onTap: () async {
+                      final user = await SessionStorage.getUser();
+                      if (!mounted) return;
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => MermaScreen(
+                            usuarioActual: user?.nombreUsuario ?? '',
+                            rolUsuario: user?.rol ?? '',
+                            esModoReporte: true,
+                          ),
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.amber.shade400),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            color: Colors.amber.shade800,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              "⚠️ Este proveedor tiene productos en merma pendientes por gestionar",
+                              style: TextStyle(
+                                color: Colors.amber.shade900,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right,
+                            color: Colors.amber.shade800,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+
                 if (enviado)
                   const Padding(
                     padding: EdgeInsets.only(top: 8.0),
@@ -1497,34 +1561,95 @@ class _GenerarPedidoProveedorDialogState
                   ),
                 const SizedBox(height: 12),
 
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: enviado
-                          ? Colors.grey.shade300
-                          : Colors.blue.shade700,
-                      foregroundColor: enviado ? Colors.black87 : Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      elevation: 0,
+                Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: enviado
+                              ? Colors.grey.shade300
+                              : Colors.blue.shade700,
+                          foregroundColor: enviado
+                              ? Colors.black87
+                              : Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          elevation: 0,
+                        ),
+                        icon: Icon(enviado ? Icons.replay : Icons.share),
+                        label: Text(
+                          enviado
+                              ? "Reenviar PDF + Texto"
+                              : "Compartir PDF y Texto",
+                        ),
+                        onPressed: () {
+                          FocusScope.of(context).unfocus();
+                          _compartirUnificado(
+                            prov,
+                            items,
+                            textoPlanoFinal,
+                            totalProveedores,
+                          );
+                        },
+                      ),
                     ),
-                    icon: Icon(enviado ? Icons.replay : Icons.share),
-                    label: Text(
-                      enviado
-                          ? "Reenviar PDF + Texto"
-                          : "Compartir PDF y Texto",
-                    ),
-                    onPressed: () {
-                      FocusScope.of(context).unfocus();
-                      _compartirUnificado(
-                        prov,
-                        items,
-                        textoPlanoFinal,
-                        totalProveedores,
-                      );
-                    },
-                  ),
+
+                    if (celularColaborador.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.green.shade700,
+                            side: BorderSide(color: Colors.green.shade300),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          icon: const Icon(Icons.chat),
+                          label: Text("Notificar texto a $nombreColaborador"),
+                          onPressed: () async {
+                            FocusScope.of(context).unfocus();
+
+                            String numero = celularColaborador.replaceAll(
+                              " ",
+                              "",
+                            );
+                            if (numero.startsWith('0')) {
+                              numero = numero.substring(1);
+                            }
+
+                            final idSecuencial = _formatearSecuencial(
+                              widget.pedidoId,
+                            );
+                            final textoWhats =
+                                "Hola *$nombreColaborador*, te notifico que tu pedido de la orden #$idSecuencial para el proveedor *$prov* ya fue procesado y enviado.\n\nAquí tienes el detalle:\n$textoPlanoFinal";
+
+                            final url = Uri.parse(
+                              "https://wa.me/593$numero?text=${Uri.encodeComponent(textoWhats)}",
+                            );
+
+                            try {
+                              await launchUrl(
+                                url,
+                                mode: LaunchMode.externalApplication,
+                              );
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      "No se pudo abrir WhatsApp. Verifica que la app esté instalada.",
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
+
                 const Divider(height: 32, thickness: 1.5),
 
                 const Text(
@@ -1607,111 +1732,131 @@ class _GenerarPedidoProveedorDialogState
                                 ),
                               ),
                             ),
-                            IconButton(
-                              constraints: const BoxConstraints(),
-                              padding: EdgeInsets.zero,
-                              tooltip: "Ver Kardex / Inventario",
-                              icon: const Icon(
-                                Icons.inventory,
-                                color: Colors.purple,
-                              ),
-                              onPressed: () {
-                                // showDialog(context: context, builder: (_) => KardexFlotanteDialog(codigoProducto: codigo));
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              constraints: const BoxConstraints(),
-                              padding: EdgeInsets.zero,
-                              tooltip: "Añadir Promoción / Bonificación",
-                              icon: const Icon(
-                                Icons.card_giftcard,
-                                color: Colors.orange,
-                              ),
-                              onPressed: () => _agregarPromocion(item),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              constraints: const BoxConstraints(),
-                              padding: EdgeInsets.zero,
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                color: Colors.red,
-                              ),
-                              onPressed: () => _eliminarProducto(item),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                InkWell(
+                                  onTap: () {},
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 2,
+                                    ),
+                                    child: Icon(
+                                      Icons.inventory,
+                                      color: Colors.purple,
+                                      size: 22,
+                                    ),
+                                  ),
+                                ),
+                                InkWell(
+                                  onTap: () => _agregarPromocion(item),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 2,
+                                    ),
+                                    child: Icon(
+                                      Icons.card_giftcard,
+                                      color: Colors.orange,
+                                      size: 22,
+                                    ),
+                                  ),
+                                ),
+                                InkWell(
+                                  onTap: () => _eliminarProducto(item),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 2,
+                                    ),
+                                    child: Icon(
+                                      Icons.delete_outline,
+                                      color: Colors.red,
+                                      size: 22,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
+                        const SizedBox(height: 6),
 
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Row(
-                              children: [
-                                const Text(
-                                  "Cant: ",
-                                  style: TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 12,
-                                  ),
+                            const Text(
+                              "Cant: ",
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 11,
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () =>
+                                  _modificarCantidadBoton(item, uniqueKey, -1),
+                              child: const Padding(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(
+                                  Icons.remove_circle_outline,
+                                  color: Colors.blueGrey,
+                                  size: 22,
                                 ),
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                  icon: const Icon(
-                                    Icons.remove_circle_outline,
-                                    color: Colors.blueGrey,
-                                  ),
-                                  onPressed: () => _modificarCantidadBoton(
-                                    item,
-                                    uniqueKey,
-                                    -1,
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 45,
-                                  height: 25,
-                                  child: TextField(
-                                    controller: cantController,
-                                    keyboardType:
-                                        const TextInputType.numberWithOptions(
-                                          decimal: true,
-                                        ),
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            SizedBox(
+                              width: 40,
+                              height: 25,
+                              child: TextField(
+                                controller: cantController,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
                                     ),
-                                    decoration: const InputDecoration(
-                                      border: OutlineInputBorder(),
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                    onSubmitted: (val) {
-                                      _guardarCantidadEscrita(
-                                        item,
-                                        uniqueKey,
-                                        val,
-                                      );
-                                    },
-                                  ),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                  icon: const Icon(
-                                    Icons.add_circle_outline,
-                                    color: Colors.blueGrey,
-                                  ),
-                                  onPressed: () => _modificarCantidadBoton(
-                                    item,
-                                    uniqueKey,
-                                    1,
-                                  ),
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.zero,
                                 ),
-                                const SizedBox(width: 4),
+                                onSubmitted: (val) {
+                                  _guardarCantidadEscrita(item, uniqueKey, val);
+                                },
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () =>
+                                  _modificarCantidadBoton(item, uniqueKey, 1),
+                              child: const Padding(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(
+                                  Icons.add_circle_outline,
+                                  color: Colors.blueGrey,
+                                  size: 22,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
 
-                                DropdownButtonHideUnderline(
+                            Expanded(
+                              child: Container(
+                                height: 26,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade50,
+                                  border: Border.all(
+                                    color: Colors.grey.shade300,
+                                  ),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: DropdownButtonHideUnderline(
                                   child: DropdownButton<String>(
+                                    isExpanded: true,
                                     value:
                                         unidadesGlobales.contains(
                                           item["unidad"],
@@ -1727,90 +1872,109 @@ class _GenerarPedidoProveedorDialogState
                                     items: unidadesGlobales.map((u) {
                                       return DropdownMenuItem(
                                         value: u,
-                                        child: Text(u),
+                                        child: Text(
+                                          u,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       );
                                     }).toList(),
                                     onChanged: (newVal) {
-                                      if (newVal != null)
+                                      if (newVal != null) {
                                         _cambiarUnidadMedidaItem(item, newVal);
+                                      }
                                     },
                                   ),
                                 ),
-                              ],
-                            ),
-                            Row(
-                              children: [
-                                const Text(
-                                  "Desc(%): ",
-                                  style: TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 40,
-                                  height: 25,
-                                  child: TextField(
-                                    controller: _getDescItemController(
-                                      uniqueKey,
-                                    ),
-                                    keyboardType: TextInputType.number,
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(fontSize: 12),
-                                    decoration: const InputDecoration(
-                                      border: OutlineInputBorder(),
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                    onChanged: (_) => setState(() {}),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                           ],
                         ),
+                        const SizedBox(height: 8),
 
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text(
-                              "Stock: $stock (Mín: $minimo)",
-                              style: TextStyle(
-                                color: Colors.green.shade700,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 11,
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 2),
+                                child: Text(
+                                  "Stock: $stock (Mín: $minimo)",
+                                  style: TextStyle(
+                                    color: Colors.green.shade700,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 11,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ),
-
-                            Row(
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                const Text(
-                                  "Costo a pedir (\$): ",
-                                  style: TextStyle(
-                                    color: Colors.black87,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 65,
-                                  height: 25,
-                                  child: TextField(
-                                    controller: costoController,
-                                    keyboardType:
-                                        const TextInputType.numberWithOptions(
-                                          decimal: true,
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Text(
+                                      "Desc(%): ",
+                                      style: TextStyle(
+                                        color: Colors.grey,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: 45,
+                                      height: 25,
+                                      child: TextField(
+                                        controller: _getDescItemController(
+                                          uniqueKey,
                                         ),
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
+                                        keyboardType: TextInputType.number,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(fontSize: 12),
+                                        decoration: const InputDecoration(
+                                          border: OutlineInputBorder(),
+                                          contentPadding: EdgeInsets.zero,
+                                        ),
+                                        onChanged: (_) => setState(() {}),
+                                      ),
                                     ),
-                                    decoration: const InputDecoration(
-                                      border: OutlineInputBorder(),
-                                      contentPadding: EdgeInsets.zero,
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Text(
+                                      "Costo (\$): ",
+                                      style: TextStyle(
+                                        color: Colors.black87,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
-                                    onChanged: (_) => setState(() {}),
-                                  ),
+                                    SizedBox(
+                                      width: 60,
+                                      height: 25,
+                                      child: TextField(
+                                        controller: costoController,
+                                        keyboardType:
+                                            const TextInputType.numberWithOptions(
+                                              decimal: true,
+                                            ),
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        decoration: const InputDecoration(
+                                          border: OutlineInputBorder(),
+                                          contentPadding: EdgeInsets.zero,
+                                        ),
+                                        onChanged: (_) => setState(() {}),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
@@ -1819,6 +1983,7 @@ class _GenerarPedidoProveedorDialogState
 
                         const Divider(height: 12),
 
+                        // 🔥 AQUI ESTÁ EL CAMBIO: Iconos "Cambiar Proveedor" e "Historial" pegados
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           crossAxisAlignment: CrossAxisAlignment.end,
@@ -1844,9 +2009,7 @@ class _GenerarPedidoProveedorDialogState
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
-
                                   const SizedBox(height: 4),
-
                                   Text(
                                     "Último con $prov: \$${ultimoCostoProv.toStringAsFixed(4)}",
                                     style: TextStyle(
@@ -1859,29 +2022,37 @@ class _GenerarPedidoProveedorDialogState
                               ),
                             ),
                             Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                  tooltip: "Cambiar Proveedor Destino",
-                                  icon: const Icon(
-                                    Icons.swap_horiz,
-                                    color: Colors.blue,
+                                InkWell(
+                                  onTap: () => _cambiarProveedor(item),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 4,
+                                    ),
+                                    child: Icon(
+                                      Icons.swap_horiz,
+                                      color: Colors.blue,
+                                      size: 24,
+                                    ),
                                   ),
-                                  onPressed: () => _cambiarProveedor(item),
                                 ),
-                                const SizedBox(width: 16),
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                  tooltip: "Historial de Costos",
-                                  icon: const Icon(
-                                    Icons.history,
-                                    color: Colors.blue,
-                                  ),
-                                  onPressed: () => _verHistorial(
+                                InkWell(
+                                  onTap: () => _verHistorial(
                                     codigo,
                                     item["nombre_producto"]?.toString() ?? "",
+                                  ),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 4,
+                                    ),
+                                    child: Icon(
+                                      Icons.history,
+                                      color: Colors.blue,
+                                      size: 24,
+                                    ),
                                   ),
                                 ),
                               ],

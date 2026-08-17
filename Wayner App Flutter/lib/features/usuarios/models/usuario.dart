@@ -3,6 +3,7 @@ class Usuario {
   final String nombreUsuario;
   final String? nombreCompleto;
   final String rol;
+  final String? celular; // 🔥 NUEVO CAMPO AGREGADO
   final bool activo;
   final String? fechaCreacion;
   final String? ultimoLogin;
@@ -12,6 +13,7 @@ class Usuario {
     required this.nombreUsuario,
     required this.nombreCompleto,
     required this.rol,
+    required this.celular, // 🔥 NUEVO CAMPO AGREGADO
     required this.activo,
     required this.fechaCreacion,
     required this.ultimoLogin,
@@ -23,6 +25,7 @@ class Usuario {
       nombreUsuario: json['nombre_usuario']?.toString() ?? '',
       nombreCompleto: json['nombre_completo']?.toString(),
       rol: json['rol']?.toString() ?? '',
+      celular: json['celular']?.toString(), // 🔥 NUEVO CAMPO AGREGADO
       activo: json['activo'] == true,
       fechaCreacion: json['fecha_creacion']?.toString(),
       ultimoLogin: json['ultimo_login']?.toString(),
