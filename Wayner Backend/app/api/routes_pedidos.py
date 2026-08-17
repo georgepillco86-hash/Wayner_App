@@ -498,6 +498,26 @@ def notificar_envio_proveedor(
 
     return ok(data, "Proveedor notificado exitosamente")
 
+# =========================================================================
+# 🔥 NUEVAS RUTAS PARA LA VISTA CONSOLIDADA "POR PROVEEDORES" 🔥
+# =========================================================================
+
+@router.get("/borradores/agrupados-por-proveedor")
+def listar_borradores_agrupados(request: Request):
+    data = service.listar_borradores_agrupados_por_proveedor()
+    registrar_log_negocio(
+        request,
+        accion="CONSULTA_BORRADORES_AGRUPADOS",
+        modulo="PEDIDOS",
+        detalle="Consulta de órdenes en BORRADOR agrupadas por proveedor",
+    )
+    return ok(data, "Borradores agrupados por proveedor obtenidos exitosamente")
+
+
+@router.get("/borradores/proveedor-detalle")
+def obtener_detalle_borradores_proveedor(proveedor: str = Query(..., description="Nombre del proveedor")):
+    data = service.obtener_detalle_borradores_proveedor(proveedor)
+    return ok(data, f"Detalle de borradores para {proveedor} obtenido exitosamente")
 
 # ==========================================
 # 🔥 NUEVOS ENDPOINTS: INTEGRACIÓN RPA (SRI) 🔥

@@ -31,11 +31,13 @@ class UsuarioService:
         if existing:
             raise ValidationError("Ya existe un usuario con ese nombre")
 
+        # 🔥 Agregado el campo celular
         usuario_id = self.repository.create_user(
             nombre_usuario=nombre_usuario,
             password_hash=payload.password.strip(),
             nombre_completo=payload.nombre_completo.strip() if payload.nombre_completo else None,
             rol=rol,
+            celular=payload.celular.strip() if payload.celular else None,
             activo=payload.activo,
         )
 
@@ -69,6 +71,13 @@ class UsuarioService:
             if payload.rol is not None
             else user["rol"]
         )
+        
+        # 🔥 Extraemos el celular del payload o mantenemos el actual
+        nuevo_celular = (
+            payload.celular.strip() if payload.celular else None
+            if payload.celular is not None
+            else user.get("celular")
+        )
 
         nuevo_activo = (
             payload.activo
@@ -76,11 +85,13 @@ class UsuarioService:
             else user["activo"]
         )
 
+        # 🔥 Pasamos el celular al repositorio
         self.repository.update_user(
             usuario_id=usuario_id,
             nombre_usuario=nuevo_nombre_usuario,
             nombre_completo=nuevo_nombre_completo,
             rol=nuevo_rol,
+            celular=nuevo_celular,
             activo=nuevo_activo,
         )
 

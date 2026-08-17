@@ -8,6 +8,10 @@ class MermaCreate(BaseModel):
     cantidad: float
     novedad: str
     comentario: Optional[str] = ""
+    # 🔥 NUEVOS CAMPOS: Para sincronizar con el modelo de Flutter
+    proveedor: Optional[str] = None
+    ultimo_costo: Optional[float] = None
+    cantidad_despachada: Optional[float] = 0.0
 
 class MermaUpdate(BaseModel):
     cantidad: Optional[float] = None

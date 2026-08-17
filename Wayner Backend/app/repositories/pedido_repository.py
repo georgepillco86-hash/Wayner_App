@@ -293,17 +293,19 @@ class PedidoRepository:
     def get_order(self, pedido_id: int) -> dict[str, Any] | None:
         query = """
         SELECT
-            id,
-            codigo_pedido,
-            estado,
-            usuario_creacion AS usuario,
-            observacion,
-            fecha_creacion,
-            fecha_envio,
-            fecha_recepcion,
+            p.id,
+            p.codigo_pedido,
+            p.estado,
+            p.usuario_creacion AS usuario,
+            u.celular AS celular_usuario,
+            p.observacion,
+            p.fecha_creacion,
+            p.fecha_envio,
+            p.fecha_recepcion,
             NULL AS fecha_actualizacion
-        FROM pedidos
-        WHERE id = %s
+        FROM pedidos p
+        LEFT JOIN usuarios u ON u.nombre_usuario = p.usuario_creacion
+        WHERE p.id = %s
         LIMIT 1
         """
 
@@ -416,16 +418,18 @@ class PedidoRepository:
     def get_order_user_detail(self, pedido_id: int) -> dict[str, Any] | None:
         query_pedido = """
         SELECT
-            id,
-            codigo_pedido,
-            estado,
-            usuario_creacion AS usuario,
-            observacion,
-            fecha_creacion,
-            fecha_envio,
-            fecha_recepcion
-        FROM pedidos
-        WHERE id = %s
+            p.id,
+            p.codigo_pedido,
+            p.estado,
+            p.usuario_creacion AS usuario,
+            u.celular AS celular_usuario,
+            p.observacion,
+            p.fecha_creacion,
+            p.fecha_envio,
+            p.fecha_recepcion
+        FROM pedidos p
+        LEFT JOIN usuarios u ON u.nombre_usuario = p.usuario_creacion
+        WHERE p.id = %s
         LIMIT 1
         """
 
@@ -499,16 +503,18 @@ class PedidoRepository:
     def get_order_admin_detail(self, pedido_id: int) -> dict[str, Any] | None:
         query_pedido = """
         SELECT
-            id,
-            codigo_pedido,
-            estado,
-            usuario_creacion AS usuario,
-            observacion,
-            fecha_creacion,
-            fecha_envio,
-            fecha_recepcion
-        FROM pedidos
-        WHERE id = %s
+            p.id,
+            p.codigo_pedido,
+            p.estado,
+            p.usuario_creacion AS usuario,
+            u.celular AS celular_usuario,
+            p.observacion,
+            p.fecha_creacion,
+            p.fecha_envio,
+            p.fecha_recepcion
+        FROM pedidos p
+        LEFT JOIN usuarios u ON u.nombre_usuario = p.usuario_creacion
+        WHERE p.id = %s
         LIMIT 1
         """
 
@@ -854,7 +860,6 @@ class PedidoRepository:
         pedidos_db.execute(query, (tipo_destino, item_id, pedido_id))
 
     def list_orders_bodega(self, limit: int = 100) -> list[dict[str, Any]]:
-        # 🔥 ACTUALIZADO: Agrupa por proveedor y permite visualizar fragmentos notificados 🔥
         query = """
         SELECT
             p.id,
@@ -906,16 +911,18 @@ class PedidoRepository:
     def get_order_bodega_detail(self, pedido_id: int) -> dict[str, Any] | None:
         query_pedido = """
         SELECT
-            id,
-            codigo_pedido,
-            estado,
-            usuario_creacion AS usuario,
-            observacion,
-            fecha_creacion,
-            fecha_envio,
-            fecha_recepcion
-        FROM pedidos
-        WHERE id = %s
+            p.id,
+            p.codigo_pedido,
+            p.estado,
+            p.usuario_creacion AS usuario,
+            u.celular AS celular_usuario,
+            p.observacion,
+            p.fecha_creacion,
+            p.fecha_envio,
+            p.fecha_recepcion
+        FROM pedidos p
+        LEFT JOIN usuarios u ON u.nombre_usuario = p.usuario_creacion
+        WHERE p.id = %s
         LIMIT 1
         """
 

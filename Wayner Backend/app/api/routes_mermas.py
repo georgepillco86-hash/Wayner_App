@@ -1,9 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
+from typing import Optional, List
 from app.repositories.merma_repository import MermaRepository
-from app.schemas.merma import MermaCreate, MermaUpdate, MermaEstadoUpdate
-from typing import Optional
-from fastapi import APIRouter, HTTPException
-from app.schemas.merma import DespachoCreate 
+from app.schemas.merma import MermaCreate, MermaUpdate, MermaEstadoUpdate, DespachoCreate 
 
 router = APIRouter()
 merma_repo = MermaRepository()
@@ -27,6 +25,18 @@ async def crear_merma(merma: MermaCreate, current_user: dict = Depends(get_curre
     usuario = current_user.get("username")
     nueva_merma = merma_repo.create(merma.dict(), usuario)
     return {"success": True, "data": nueva_merma}
+
+# 🔥 NUEVO ENDPOINT: Recibe una lista de mermas y las guarda en lote
+@router.post("/lote")
+async def crear_mermas_en_lote(mermas: List[MermaCreate], current_user: dict = Depends(get_current_user_headers)):
+    usuario = current_user.get("username")
+    try:
+        # Convertimos la lista de esquemas a una lista de diccionarios
+        mermas_data = [m.dict() for m in mermas]
+        merma_repo.crear_en_lote(mermas_data, usuario)
+        return {"success": True, "message": f"{len(mermas)} mermas creadas exitosamente."}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.put("/{merma_id}")
 async def actualizar_merma(merma_id: int, merma: MermaUpdate, current_user: dict = Depends(get_current_user_headers)):
@@ -94,3 +104,12 @@ async def registrar_despacho_merma(merma_id: int, despacho: DespachoCreate, curr
         return {"success": True, "data": actualizada, "message": "Despacho registrado correctamente"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/proveedores-pendientes")
+def obtener_proveedores_mermas_pendientes():
+    try:
+        repo = MermaRepository()
+        proveedores = repo.obtener_proveedores_con_mermas_pendientes()
+        return {"success": True, "data": proveedores}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

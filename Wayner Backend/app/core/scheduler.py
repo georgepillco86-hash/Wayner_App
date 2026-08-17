@@ -3,7 +3,8 @@ from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.core.database import db
-# Asegúrate de que la ruta al repositorio sea la correcta según la estructura de tu proyecto
+# Importamos la base de datos de pedidos/promociones
+from app.core.pedidos_database import pedidos_db
 from app.repositories.cronograma_repository import CronogramaRepository 
 # from app.services.notification_service import enviar_notificacion_push
 
@@ -82,6 +83,49 @@ def procesar_renovacion_cronogramas():
     except Exception as e:
         logger.error(f"[SCHEDULER] Error crítico al auto-renovar cronogramas: {e}")
 
+# 🔥 NUEVO: Cron Job para revertir promociones vencidas automáticamente
+def procesar_promociones_vencidas():
+    logger.info("[SCHEDULER] Verificando promociones vencidas para revertir precios...")
+    try:
+        # Buscar promociones activas cuya fecha de fin ya pasó (hasta ayer)
+        query_vencidas = """
+            SELECT id, precio_base, codigo_barra 
+            FROM promociones 
+            WHERE activa = TRUE AND fecha_fin < CURRENT_DATE
+        """
+        vencidas = pedidos_db.fetch_all(query_vencidas)
+        
+        if vencidas:
+            for promo in vencidas:
+                promo_id = promo["id"]
+                precio_base = promo["precio_base"]
+                codigo = promo["codigo_barra"]
+                
+                logger.info(f"[SCHEDULER] Desactivando promo vencida (ID: {promo_id}, Código: {codigo})...")
+                
+                # 1. Apagar la promoción en la base de datos
+                pedidos_db.execute(
+                    "UPDATE promociones SET activa = FALSE WHERE id = %s", 
+                    (promo_id,)
+                )
+                
+                # 2. Enviar la orden al RPA para revertir el precio en BITS
+                pedidos_db.execute(
+                    """
+                    INSERT INTO rpa_tareas_promociones (
+                        promocion_id, tipo_tarea, precio_objetivo, estado
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    (promo_id, 'REVERTIR_PROMO', precio_base, 'PENDIENTE')
+                )
+                
+            logger.info(f"[SCHEDULER] Se enviaron a revertir {len(vencidas)} promociones vencidas al RPA.")
+        else:
+            logger.info("[SCHEDULER] No hay promociones vencidas para revertir hoy.")
+            
+    except Exception as e:
+        logger.error(f"[SCHEDULER] Error al procesar promociones vencidas: {e}")
+
 def start_scheduler():
     scheduler = BackgroundScheduler()
     
@@ -90,5 +134,8 @@ def start_scheduler():
     
     # 2. Renovación de base de datos (Todos los días a las 01:00 AM)
     scheduler.add_job(procesar_renovacion_cronogramas, 'cron', hour=1, minute=0)
+    
+    # 🔥 3. NUEVO: Revertir promociones caducadas (Todos los días a las 00:01 AM)
+    scheduler.add_job(procesar_promociones_vencidas, 'cron', hour=0, minute=1)
     
     scheduler.start()

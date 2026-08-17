@@ -136,11 +136,24 @@ class PromocionService:
                 combinado.get("mecanica"),
             )
 
+        # 🔥 MAGIA PARA EL RPA: Inyectamos el estado y la tarea 🔥
+        cambios["estado"] = "PENDIENTE_RPA"
+        cambios["tipo_tarea"] = "EDITAR"
+
         self.repository.actualizar(promocion_id, cambios)
 
         return self.obtener(promocion_id)
 
     def desactivar(self, promocion_id: int) -> dict[str, Any]:
         self.obtener(promocion_id)
-        self.repository.desactivar(promocion_id)
+        
+        # 🔥 MAGIA PARA EL RPA: Enviamos la orden completa para eliminar/restaurar 🔥
+        cambios_rpa = {
+            "activa": False,
+            "estado": "PENDIENTE_RPA",
+            "tipo_tarea": "ELIMINAR"
+        }
+        
+        self.repository.actualizar(promocion_id, cambios_rpa)
+        
         return self.obtener(promocion_id)

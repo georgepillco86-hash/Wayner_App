@@ -135,7 +135,7 @@ class PromocionRepository:
         RETURNING id
         """
 
-        return pedidos_db.execute(
+        promocion_id = pedidos_db.execute(
             query,
             (
                 data["codigo_barra"],
@@ -152,7 +152,31 @@ class PromocionRepository:
             ),
         )
 
+        # Inserción de la orden inicial (Nueva Promoción)
+        if promocion_id:
+            query_rpa = """
+            INSERT INTO rpa_tareas_promociones (
+                promocion_id, tipo_tarea, precio_objetivo, estado
+            ) VALUES (%s, %s, %s, %s)
+            """
+            pedidos_db.execute(
+                query_rpa,
+                (
+                    promocion_id, 
+                    'APLICAR_PROMO', 
+                    data["precio_actual_prom"], 
+                    'PENDIENTE'
+                )
+            )
+
+        return promocion_id
+
     def actualizar(self, promocion_id: int, data: dict[str, Any]) -> None:
+        # 1. 🔥 MAGIA: Extraemos las variables del RPA para que no rompan el SQL
+        tipo_tarea = data.pop("tipo_tarea", None)
+        estado_rpa = data.pop("estado", None)
+
+        # 2. Actualizamos la tabla principal normalmente
         campos = []
         params: list[Any] = []
 
@@ -160,23 +184,71 @@ class PromocionRepository:
             campos.append(f"{key} = %s")
             params.append(value)
 
-        if not campos:
-            return
+        if campos:
+            params.append(promocion_id)
+            query = f"""
+            UPDATE promociones
+            SET {', '.join(campos)}
+            WHERE id = %s
+            """
+            pedidos_db.execute(query, tuple(params))
 
-        params.append(promocion_id)
+        # 3. 🔥 Insertamos la tarea en la sala de espera del RPA
+        if tipo_tarea:
+            promo = self.obtener_por_id(promocion_id)
+            if promo:
+                # Si la tarea es eliminar o revertir, el precio objetivo es el base
+                if tipo_tarea in ["ELIMINAR", "REVERTIR_PROMO"]:
+                    precio_obj = promo["precio_base"]
+                else:
+                    # Si es editar, el precio objetivo es el promocional
+                    precio_obj = promo["precio_actual_prom"]
 
-        query = f"""
-        UPDATE promociones
-        SET {', '.join(campos)}
-        WHERE id = %s
-        """
+                # Garantizamos que la palabra sea "PENDIENTE" para que el bot la lea
+                estado_insert = "PENDIENTE" if estado_rpa == "PENDIENTE_RPA" else (estado_rpa or "PENDIENTE")
 
-        pedidos_db.execute(query, tuple(params))
+                query_rpa = """
+                INSERT INTO rpa_tareas_promociones (
+                    promocion_id, tipo_tarea, precio_objetivo, estado
+                ) VALUES (%s, %s, %s, %s)
+                """
+                pedidos_db.execute(query_rpa, (promocion_id, tipo_tarea, precio_obj, estado_insert))
 
     def desactivar(self, promocion_id: int) -> None:
-        query = """
+        query_update = """
         UPDATE promociones
         SET activa = FALSE
+        WHERE id = %s
+        """
+        pedidos_db.execute(query_update, (promocion_id,))
+
+        query_select = """
+        SELECT precio_base 
+        FROM promociones 
+        WHERE id = %s
+        LIMIT 1
+        """
+        promocion = pedidos_db.fetch_one(query_select, (promocion_id,))
+
+        if promocion:
+            query_rpa = """
+            INSERT INTO rpa_tareas_promociones (
+                promocion_id, tipo_tarea, precio_objetivo, estado
+            ) VALUES (%s, %s, %s, %s)
+            """
+            pedidos_db.execute(
+                query_rpa,
+                (
+                    promocion_id, 
+                    'REVERTIR_PROMO', 
+                    promocion["precio_base"], 
+                    'PENDIENTE'
+                )
+            )
+
+    def eliminar(self, promocion_id: int) -> None:
+        query = """
+        DELETE FROM promociones
         WHERE id = %s
         """
         pedidos_db.execute(query, (promocion_id,))

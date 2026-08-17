@@ -16,6 +16,8 @@ from app.api.routes_promociones import router as promociones_router
 from app.api.routes_mermas import router as mermas_router
 from app.api.routes_proveedores import router as proveedores_router
 from app.api.routes_cronogramas import router as cronogramas_router
+from app.api import routes_rpa_promociones
+from app.api import routes_conversiones  # 🔥 Importación movida aquí para mantener el orden
 
 # --- IMPORTACIONES DE CORE Y SERVICIOS ---
 from app.core.config import settings
@@ -113,3 +115,7 @@ app.include_router(mermas_router, prefix=f"{settings.api_prefix}/mermas", tags=[
 # Rutas Nuevas
 app.include_router(proveedores_router, prefix="/api/proveedores", tags=["Proveedores"])
 app.include_router(cronogramas_router, prefix="/api/cronograma", tags=["Cronograma"])
+app.include_router(routes_rpa_promociones.router)
+
+# 🔥 CORRECCIÓN CLAVE: Agregamos prefix="/api" para que Flutter apunte exactamente a /api/conversiones
+app.include_router(routes_conversiones.router, prefix="/api")

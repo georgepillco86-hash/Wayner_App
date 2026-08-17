@@ -13,6 +13,7 @@ class UsuarioRepository:
             nombre_usuario,
             nombre_completo,
             rol,
+            celular,
             activo,
             fecha_creacion,
             ultimo_login
@@ -28,6 +29,7 @@ class UsuarioRepository:
             nombre_usuario,
             nombre_completo,
             rol,
+            celular,
             activo,
             fecha_creacion,
             ultimo_login
@@ -51,6 +53,7 @@ class UsuarioRepository:
         password_hash: str,
         nombre_completo: str | None,
         rol: str,
+        celular: str | None,
         activo: bool,
     ) -> int:
         query = """
@@ -59,10 +62,11 @@ class UsuarioRepository:
             password_hash,
             nombre_completo,
             rol,
+            celular,
             activo,
             fecha_creacion
         )
-        VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
         RETURNING id
         """
         return pedidos_db.execute(
@@ -72,6 +76,7 @@ class UsuarioRepository:
                 password_hash,
                 nombre_completo,
                 rol,
+                celular,
                 activo,
             ),
         )
@@ -82,6 +87,7 @@ class UsuarioRepository:
         nombre_usuario: str,
         nombre_completo: str | None,
         rol: str,
+        celular: str | None,
         activo: bool,
     ) -> None:
         query = """
@@ -90,6 +96,7 @@ class UsuarioRepository:
             nombre_usuario = %s,
             nombre_completo = %s,
             rol = %s,
+            celular = %s,
             activo = %s
         WHERE id = %s
         """
@@ -99,6 +106,7 @@ class UsuarioRepository:
                 nombre_usuario,
                 nombre_completo,
                 rol,
+                celular,
                 activo,
                 usuario_id,
             ),

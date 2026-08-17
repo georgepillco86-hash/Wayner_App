@@ -999,5 +999,150 @@ class PedidoService:
     
     def consultar_estado_rpa(self, documento_id: int) -> str:
         return self.repository.consultar_estado_rpa(documento_id)
-    
-    
+        
+    # =========================================================================
+    # 🔥 NUEVAS FUNCIONES PARA LA VISTA CONSOLIDADA "POR PROVEEDORES" 🔥
+    # =========================================================================
+
+    def listar_borradores_agrupados_por_proveedor(self) -> list[dict]:
+        """
+        Obtiene todos los ítems de todos los pedidos en estado BORRADOR,
+        y los agrupa por proveedor, devolviendo un resumen por cada uno.
+        """
+        # 1. Obtener todos los pedidos en borrador
+        query_pedidos = """
+        SELECT id FROM pedidos WHERE estado = 'BORRADOR'
+        """
+        from app.core.pedidos_database import pedidos_db
+        pedidos_borrador = pedidos_db.fetch_all(query_pedidos)
+
+        if not pedidos_borrador:
+            return []
+
+        ids_pedidos = [str(p["id"]) for p in pedidos_borrador]
+        ids_str = ",".join(ids_pedidos)
+
+        # 2. Extraer todos los ítems de esos pedidos
+        query_items = f"""
+        SELECT 
+            pi.pedido_id,
+            COALESCE(pr.nombre, 'SIN PROVEEDOR') AS proveedor,
+            pi.cantidad_pedida
+        FROM pedido_items pi
+        LEFT JOIN proveedores pr ON pr.id = pi.proveedor_id
+        WHERE pi.pedido_id IN ({ids_str})
+        """
+        items = pedidos_db.fetch_all(query_items)
+
+        # 3. Agrupar la información por proveedor
+        grupos = defaultdict(lambda: {"total_items": 0, "cantidad_total": 0.0, "pedidos_ids": set()})
+
+        proveedor_excluido = "DUCHI SANCHEZ ROSA EMPERATRIZ"
+
+        for item in items:
+            proveedor_original = item.get("proveedor", "SIN PROVEEDOR").strip()
+            proveedor = proveedor_original.upper()
+
+            if proveedor == proveedor_excluido:
+                continue
+
+            grupos[proveedor_original]["total_items"] += 1
+            grupos[proveedor_original]["cantidad_total"] += float(item.get("cantidad_pedida") or 0.0)
+            grupos[proveedor_original]["pedidos_ids"].add(item["pedido_id"])
+
+        # 4. Formatear la respuesta
+        resultado = []
+        for prov, datos in grupos.items():
+            resultado.append({
+                "proveedor": prov,
+                "total_items": datos["total_items"],
+                "cantidad_total": round(datos["cantidad_total"], 2),
+                "cantidad_ordenes": len(datos["pedidos_ids"])
+            })
+
+        # Ordenar alfabéticamente por proveedor
+        return sorted(resultado, key=lambda x: x["proveedor"])
+
+    def obtener_detalle_borradores_proveedor(self, proveedor: str) -> dict:
+        """
+        Obtiene todos los ítems específicos de un proveedor provenientes
+        de órdenes en estado BORRADOR, inyectando costos y datos del usuario.
+        """
+        proveedor_str = self._validate_text(proveedor, "El proveedor")
+
+        # 1. Obtener todos los pedidos en borrador
+        query_pedidos = """
+        SELECT id FROM pedidos WHERE estado = 'BORRADOR'
+        """
+        from app.core.pedidos_database import pedidos_db
+        pedidos_borrador = pedidos_db.fetch_all(query_pedidos)
+
+        if not pedidos_borrador:
+            return {"proveedor": proveedor_str, "items": []}
+
+        ids_pedidos = [str(p["id"]) for p in pedidos_borrador]
+        ids_str = ",".join(ids_pedidos)
+
+        # 2. Buscar ítems de ese proveedor en esos pedidos
+        query_items = f"""
+        SELECT
+            pi.id,
+            pi.pedido_id,
+            pi.proveedor_id,
+            COALESCE(pr.nombre, 'SIN PROVEEDOR') AS proveedor,
+            pi.codigo_producto,
+            pi.nombre_producto,
+            pi.marca,
+            pi.stock_actual,
+            pi.cantidad_pedida,
+            pi.unidad,
+            pi.observacion,
+            pi.nota_compra,
+            pi.tipo_destino,
+            pi.recibido,
+            pi.comentario_recepcion,
+            pi.fecha_recepcion_item,
+            pi.usuario_recepcion,
+            pi.fecha_creacion,
+            p.usuario_creacion,
+            u.celular AS celular_usuario
+        FROM pedido_items pi
+        LEFT JOIN proveedores pr ON pr.id = pi.proveedor_id
+        LEFT JOIN pedidos p ON p.id = pi.pedido_id
+        LEFT JOIN usuarios u ON u.nombre_usuario = p.usuario_creacion
+        WHERE pi.pedido_id IN ({ids_str}) 
+        AND UPPER(COALESCE(pr.nombre, 'SIN PROVEEDOR')) = UPPER(%s)
+        ORDER BY pi.nombre_producto ASC
+        """
+        
+        items = pedidos_db.fetch_all(query_items, (proveedor_str,))
+
+        if not items:
+            return {"proveedor": proveedor_str, "items": []}
+
+        # 3. Inyectar costos (igual que en el Dialog normal)
+        items_enriquecidos = []
+        for item in items:
+            costo_data = self.repository.get_lowest_cost_provider(
+                codigo=item.get('codigo_producto'), 
+                meses=3
+            )
+            
+            item_dict = dict(item)
+            if costo_data:
+                item_dict["costo_base"] = costo_data["costo_base"]
+                item_dict["costo_final"] = costo_data["costo_final"]
+                item_dict["tiene_iva"] = costo_data["tiene_iva"]
+                item_dict["mejor_proveedor"] = costo_data["proveedor"]
+            else:
+                item_dict["costo_base"] = 0.0
+                item_dict["costo_final"] = 0.0
+                item_dict["tiene_iva"] = False
+                item_dict["mejor_proveedor"] = None
+                
+            items_enriquecidos.append(item_dict)
+
+        return {
+            "proveedor": proveedor_str,
+            "items": items_enriquecidos
+        }

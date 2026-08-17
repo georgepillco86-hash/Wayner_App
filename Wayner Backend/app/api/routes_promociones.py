@@ -108,7 +108,7 @@ def actualizar_promocion(
     return ok(data, "Promoción actualizada exitosamente")
 
 
-@router.delete("/{promocion_id}")
+@router.patch("/{promocion_id}/desactivar")
 def desactivar_promocion(promocion_id: int, request: Request):
     data = service.desactivar(promocion_id)
 
@@ -119,3 +119,19 @@ def desactivar_promocion(promocion_id: int, request: Request):
     )
 
     return ok(data, "Promoción desactivada exitosamente")
+
+# 🔥 CORRECCIÓN: Devolvemos 'data' en lugar de 'None' para que Flutter 
+# tenga el ID de la promoción y pueda mostrar la pantalla de "Cargando..."
+@router.delete("/{promocion_id}")
+def eliminar_promocion(promocion_id: int, request: Request):
+    # 1. Capturamos los datos de la promoción desactivada en la variable 'data'
+    data = service.desactivar(promocion_id)
+    
+    registrar_log_promocion(
+        request,
+        accion="PROMOCION_ENVIADA_A_ELIMINAR",
+        detalle=f"Promoción #{promocion_id} encolada al RPA para restaurar precio base",
+    )
+    
+    # 2. Devolvemos 'data' a Flutter
+    return ok(data, "Promoción enviada al RPA para su eliminación")
